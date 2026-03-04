@@ -270,6 +270,18 @@ export const replyToPost = async (
   });
 };
 
+// Delete a post by URI
+export const deletePost = async (agent: BskyAgent, uri: string): Promise<boolean> => {
+  try {
+    await agent.deletePost(uri);
+    logger.success(`🗑️ Successfully deleted post: ${uri}`);
+    return true;
+  } catch (error) {
+    logger.error(`❌ Error deleting post ${uri}\n\t- ${error || 'unknown'}`);
+    return false;
+  }
+};
+
 // Get a profile by DID
 export const getProfile = async (agent: BskyAgent, did: string) => {
   const response = await agent.getProfile({ actor: did });

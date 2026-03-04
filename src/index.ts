@@ -8,6 +8,7 @@ import * as logger from './services/logger.js';
 import * as db from './services/database.js';
 import storeMentions from './mentions.js';
 import { checkAndProcessMentions } from './analysis.js';
+import { cleanupOrphanedReplies } from './cleanup.js';
 
 // Load environment variables
 dotenv.config();
@@ -53,6 +54,9 @@ async function main() {
 
     // Now we check for unanalyzed mentions and process them
     await checkAndProcessMentions(agent);
+
+    // Clean up orphaned replies (where original mention post was deleted)
+    await cleanupOrphanedReplies(agent);
   } catch (error) {
     logger.error(`❌ Error running the bot:\n\t- ${error}`);
     await db.disconnect();

@@ -39,25 +39,37 @@ export async function handleSelfTargeting(agent: BskyAgent, mention: Mention): P
     // Select a random whimsical response
     const randomResponse = getRandomResponse();
 
-    // Reply to the mention with the whimsical response
-    const reply = await bsky.replyToPost(
-      agent,
-      { uri: mentionPost.uri, cid: mentionPost.cid },
-      randomResponse
-    ) as { uri?: string; cid?: string } | undefined;
+    try {
+      // Reply to the mention with the whimsical response
+      const reply = await bsky.replyToPost(
+        agent,
+        { uri: mentionPost.uri, cid: mentionPost.cid },
+        randomResponse
+      ) as { uri?: string; cid?: string } | undefined;
 
-    // Extract the reply post ID and URL
-    const replyPostId = reply?.uri?.split('/').pop() || '';
-    const replyUrl = reply?.uri || '';
+      // Extract the reply post ID and URL
+      const replyPostId = reply?.uri?.split('/').pop() || '';
+      const replyUrl = reply?.uri || '';
 
-    // Mark the mention as done
-    await db.markMentionAsDone({
-      mentionId: mention.id,
-      replyPostId,
-      replyUrl,
-    });
+      // Mark the mention as done
+      await db.markMentionAsDone({
+        mentionId: mention.id,
+        replyPostId,
+        replyUrl,
+      });
 
-    logger.success(`✅ Replied to self-targeting mention with whimsical response`);
+      logger.success(`✅ Replied to self-targeting mention with whimsical response`);
+    } catch (replyError) {
+      logger.warn(`⚠️ Failed to reply to self-targeting post (likely deleted): ${mention.postUrl}\n\t- ${replyError}`);
+
+      await db.markMentionAsDone({
+        mentionId: mention.id,
+        replyPostId: '',
+        replyUrl: '',
+      });
+
+      logger.info(`✅ Marked self-targeting mention as processed (reply failed)`);
+    }
   } else {
     // The post no longer exists, so we can't reply to it
     logger.warn(`⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`);

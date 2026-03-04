@@ -28,6 +28,7 @@ model Mention {
   status        MentionStatus @default(UNPROCESSED)
   replyPostId   String?       // The ID of our reply post (if we've replied)
   replyUrl      String?       // URL to our reply
+  replyDeletedAt DateTime?    // When we soft-deleted our reply (deleted on Bluesky but kept in DB)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 

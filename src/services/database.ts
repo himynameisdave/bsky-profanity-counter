@@ -179,6 +179,29 @@ export async function createOrUpdateAnalysis({
 }
 
 /**
+ * Get mentions that have active replies (DONE with a replyUrl, not yet soft-deleted)
+ */
+export async function getMentionsWithActiveReplies() {
+  return prisma.mention.findMany({
+    where: {
+      status: 'DONE',
+      replyUrl: { not: '' },
+      replyDeletedAt: null,
+    },
+  });
+}
+
+/**
+ * Mark a mention's reply as soft-deleted (deleted on Bluesky but kept in DB)
+ */
+export async function markReplyAsDeleted(mentionId: string) {
+  return prisma.mention.update({
+    where: { id: mentionId },
+    data: { replyDeletedAt: new Date() },
+  });
+}
+
+/**
  * Clean up old analyses (optional, for storage management)
  * Removes analyses older than specified days
  */

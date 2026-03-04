@@ -49,26 +49,39 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       const mentionPost = await bsky.getPost(agent, mention.postUrl);
 
       if (mentionPost) {
-        // Reply to the mention with the analysis results
-        const reply = await bsky.replyToPost(
-          agent,
-          { uri: mentionPost.uri, cid: mentionPost.cid },
-          responseMessage
-        ) as { uri?: string; cid?: string } | undefined;
+        try {
+          // Reply to the mention with the analysis results
+          const reply = await bsky.replyToPost(
+            agent,
+            { uri: mentionPost.uri, cid: mentionPost.cid },
+            responseMessage
+          ) as { uri?: string; cid?: string } | undefined;
 
-        // Extract the reply post ID and URL
-        const replyPostId = reply?.uri?.split('/').pop() || '';
-        const replyUrl = reply?.uri || '';
+          // Extract the reply post ID and URL
+          const replyPostId = reply?.uri?.split('/').pop() || '';
+          const replyUrl = reply?.uri || '';
 
-        // Mark the mention as done
-        await db.markMentionAsDone({
-          mentionId: mention.id,
-          replyPostId,
-          replyUrl,
-          analysisId: freshAnalysis.id
-        });
+          // Mark the mention as done
+          await db.markMentionAsDone({
+            mentionId: mention.id,
+            replyPostId,
+            replyUrl,
+            analysisId: freshAnalysis.id
+          });
 
-        logger.success(`✅ Used cached analysis to reply to mention for ${mention.userHandle}`);
+          logger.success(`✅ Used cached analysis to reply to mention for ${mention.userHandle}`);
+        } catch (replyError) {
+          logger.warn(`⚠️ Failed to reply to post (likely deleted): ${mention.postUrl}\n\t- ${replyError}`);
+
+          await db.markMentionAsDone({
+            mentionId: mention.id,
+            replyPostId: '',
+            replyUrl: '',
+            analysisId: freshAnalysis.id
+          });
+
+          logger.info(`✅ Marked mention as processed (reply failed) for ${mention.userHandle}`);
+        }
       } else {
         // The post no longer exists, so we can't reply to it
         logger.warn(`⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`);
@@ -119,26 +132,39 @@ async function processMention(agent: BskyAgent, mention: Mention) {
         const mentionPost = await bsky.getPost(agent, mention.postUrl);
 
         if (mentionPost) {
-          // Reply to the mention with the analysis results
-          const reply = await bsky.replyToPost(
-            agent,
-            { uri: mentionPost.uri, cid: mentionPost.cid },
-            responseMessage
-          ) as { uri?: string; cid?: string } | undefined;
+          try {
+            // Reply to the mention with the analysis results
+            const reply = await bsky.replyToPost(
+              agent,
+              { uri: mentionPost.uri, cid: mentionPost.cid },
+              responseMessage
+            ) as { uri?: string; cid?: string } | undefined;
 
-          // Extract the reply post ID and URL
-          const replyPostId = reply?.uri?.split('/').pop() || '';
-          const replyUrl = reply?.uri || '';
+            // Extract the reply post ID and URL
+            const replyPostId = reply?.uri?.split('/').pop() || '';
+            const replyUrl = reply?.uri || '';
 
-          // Mark the mention as done
-          await db.markMentionAsDone({
-            mentionId: mention.id,
-            replyPostId,
-            replyUrl,
-            analysisId: dbAnalysis.id
-          });
+            // Mark the mention as done
+            await db.markMentionAsDone({
+              mentionId: mention.id,
+              replyPostId,
+              replyUrl,
+              analysisId: dbAnalysis.id
+            });
 
-          logger.success(`✅ Analyzed and replied to mention for ${mention.userHandle}`);
+            logger.success(`✅ Analyzed and replied to mention for ${mention.userHandle}`);
+          } catch (replyError) {
+            logger.warn(`⚠️ Failed to reply to post (likely deleted): ${mention.postUrl}\n\t- ${replyError}`);
+
+            await db.markMentionAsDone({
+              mentionId: mention.id,
+              replyPostId: '',
+              replyUrl: '',
+              analysisId: dbAnalysis.id
+            });
+
+            logger.info(`✅ Marked mention as processed (reply failed) for ${mention.userHandle}`);
+          }
         } else {
           // The post no longer exists, so we can't reply to it
           logger.warn(`⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`);
@@ -168,8 +194,16 @@ async function processMention(agent: BskyAgent, mention: Mention) {
     }
   } catch (error) {
     logger.error(`❌ Error processing mention: ${error}`);
-    // Leave the mention in ANALYZING state for retry later
-    // TODO mark it as UNPROCESSED.
+    try {
+      await db.markMentionAsDone({
+        mentionId: mention.id,
+        replyPostId: '',
+        replyUrl: '',
+      });
+      logger.info(`✅ Marked failed mention as done to prevent retry loop for ${mention.userHandle}`);
+    } catch (dbError) {
+      logger.error(`❌ Failed to mark mention as done: ${dbError}`);
+    }
   }
 }
 
