@@ -18,45 +18,37 @@ describe('Profile Updater', () => {
   describe('generateProfileDescription', () => {
     it('should generate correct profile description with formatted count', () => {
       const result = generateProfileDescription(1234567);
-      const expected = `A bot which tells you how much profanity a user has poasted.
+      const expected = `Tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (it may take me a few minutes to respond).
 
-1,234,567 total profanities counted, you pottymouths!
+1,234,567 total profanities counted, you pottymouths!`;
 
-Simply tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (might take me a few minutes to respond).`;
-      
       expect(result).toBe(expected);
     });
 
     it('should handle zero count', () => {
       const result = generateProfileDescription(0);
-      const expected = `A bot which tells you how much profanity a user has poasted.
+      const expected = `Tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (it may take me a few minutes to respond).
 
-0 total profanities counted, you pottymouths!
+0 total profanities counted, you pottymouths!`;
 
-Simply tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (might take me a few minutes to respond).`;
-      
       expect(result).toBe(expected);
     });
 
     it('should handle single digit count', () => {
       const result = generateProfileDescription(5);
-      const expected = `A bot which tells you how much profanity a user has poasted.
+      const expected = `Tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (it may take me a few minutes to respond).
 
-5 total profanities counted, you pottymouths!
+5 total profanities counted, you pottymouths!`;
 
-Simply tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (might take me a few minutes to respond).`;
-      
       expect(result).toBe(expected);
     });
 
     it('should handle large numbers', () => {
       const result = generateProfileDescription(999999999);
-      const expected = `A bot which tells you how much profanity a user has poasted.
+      const expected = `Tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (it may take me a few minutes to respond).
 
-999,999,999 total profanities counted, you pottymouths!
+999,999,999 total profanities counted, you pottymouths!`;
 
-Simply tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (might take me a few minutes to respond).`;
-      
       expect(result).toBe(expected);
     });
   });
