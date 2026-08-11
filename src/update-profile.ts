@@ -1,3 +1,5 @@
+// This is a CLI entry point, so a non-zero exit code is how it reports failure
+// oxlint-disable unicorn/no-process-exit
 import dotenv from 'dotenv';
 import * as bsky from './services/bluesky.js';
 import * as profileUpdater from './services/profile-updater.js';
@@ -12,13 +14,13 @@ dotenv.config();
 async function main() {
   try {
     logger.info('🚀 Starting profile update process...');
-    
+
     // Create and authenticate the Bluesky agent
     const agent = await bsky.createAgent();
-    
+
     // Update the profile description
     await profileUpdater.updateProfileDescription(agent);
-    
+
     logger.success('✅ Profile update completed successfully');
   } catch (error) {
     logger.error(`❌ Profile update failed: ${error}`);
@@ -30,7 +32,9 @@ async function main() {
 }
 
 // Run the main function
-main().catch((error) => {
+try {
+  await main();
+} catch (error) {
   logger.error(`❌ Unexpected error: ${error}`);
   process.exit(1);
-});
+}

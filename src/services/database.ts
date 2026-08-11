@@ -1,12 +1,12 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient } from '@prisma/client';
 
 // Type for profanity details stored in JSON
 export type ProfanityDetails = {
   // Map of profanity words to counts
   wordCounts: Record<string, number>;
   // Array of top profanities with counts, sorted descending
-  topProfanities: Array<{ word: string; count: number }>;
-}
+  topProfanities: { word: string; count: number }[];
+};
 
 // Initialize Prisma client (only once at module level)
 const prisma = new PrismaClient();
@@ -49,7 +49,7 @@ export async function getUnprocessedMention() {
       },
       orderBy: {
         createdAt: 'asc', // Order by creation date, oldest first
-      }
+      },
     });
 
     if (!mention) {
@@ -182,7 +182,7 @@ export async function createOrUpdateAnalysis({
  * Clean up old analyses (optional, for storage management)
  * Removes analyses older than specified days
  */
-export async function cleanupOldAnalyses(olderThanDays: number = 30) {
+export async function cleanupOldAnalyses(olderThanDays = 30) {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
 
@@ -201,19 +201,19 @@ export async function cleanupOldAnalyses(olderThanDays: number = 30) {
  * Reset mentions that are stuck in ANALYZING state for more than the specified minutes
  * This helps recover from crashes or process terminations
  */
-export async function resetStuckMentions(olderThanMinutes: number = 30) {
+export async function resetStuckMentions(olderThanMinutes = 30) {
   const cutoffDate = new Date(Date.now() - olderThanMinutes * 60 * 1000);
 
   const result = await prisma.mention.updateMany({
     where: {
       status: 'ANALYZING',
       updatedAt: {
-        lt: cutoffDate
-      }
+        lt: cutoffDate,
+      },
     },
     data: {
-      status: 'UNPROCESSED'
-    }
+      status: 'UNPROCESSED',
+    },
   });
 
   return result.count;

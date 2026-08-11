@@ -1,29 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BskyAgent } from '@atproto/api';
-import { Mention } from '@prisma/client';
+import { describe, it, expect, vi } from 'vitest';
+import { WHIMSICAL_RESPONSES } from '../src/services/self-targeting.js';
 
 // Mock the dependencies
-vi.mock('../src/services/database.js', () => ({
-  markMentionAsDone: vi.fn(),
+vi.mock(import('../src/services/database.js'), () => ({
+  markMentionAsDone: vi.fn<() => void>(),
 }));
 
-vi.mock('../src/services/bluesky.js', () => ({
-  getPost: vi.fn(),
-  replyToPost: vi.fn(),
+vi.mock(import('../src/services/bluesky.js'), () => ({
+  getPost: vi.fn<() => void>(),
+  replyToPost: vi.fn<() => void>(),
 }));
 
-vi.mock('../src/services/logger.js', () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn(),
+vi.mock(import('../src/services/logger.js'), () => ({
+  info: vi.fn<() => void>(),
+  success: vi.fn<() => void>(),
+  warn: vi.fn<() => void>(),
+  error: vi.fn<() => void>(),
 }));
-
-// Import the modules we're testing after mocking
-import * as db from '../src/services/database.js';
-import * as bsky from '../src/services/bluesky.js';
-import * as logger from '../src/services/logger.js';
-import { WHIMSICAL_RESPONSES } from '../src/services/self-targeting.js';
 
 // We need to test the processMention function, but it's not exported
 // So we'll test the behavior by importing the module and calling the exported function
@@ -34,21 +27,20 @@ describe('Self-Targeting Detection', () => {
     // Test the condition that we added
     const botHandle = 'profanity.accountant';
     const testMention = { userHandle: botHandle };
-    
+
     // This should trigger the self-targeting detection
-    expect(testMention.userHandle === 'profanity.accountant').toBe(true);
-    
+    expect(testMention.userHandle).toBe('profanity.accountant');
+
     // Test with different handles
     const regularMention = { userHandle: 'regular.user' };
-    expect(regularMention.userHandle === 'profanity.accountant').toBe(false);
+    expect(regularMention.userHandle).not.toBe('profanity.accountant');
   });
 
   it('should have whimsical responses with nerdy accountant personality', () => {
     // Test that all responses are non-empty and contain expected elements
-    WHIMSICAL_RESPONSES.forEach(response => {
-      expect(response).toBeTruthy();
+    for (const response of WHIMSICAL_RESPONSES) {
       expect(response.length).toBeGreaterThan(0);
-    });
+    }
 
     // Test that responses contain expected accountant/nerdy patterns
     const responseText = WHIMSICAL_RESPONSES.join(' ').toLowerCase();
@@ -59,7 +51,7 @@ describe('Self-Targeting Detection', () => {
 
   it('should have exactly 10 whimsical responses', () => {
     expect(WHIMSICAL_RESPONSES).toHaveLength(10);
-    
+
     // Ensure all responses are unique
     const uniqueResponses = new Set(WHIMSICAL_RESPONSES);
     expect(uniqueResponses.size).toBe(10);
@@ -67,12 +59,12 @@ describe('Self-Targeting Detection', () => {
 
   it('should include original responses plus new nerdy accountant ones', () => {
     // Check for some original responses
-    expect(WHIMSICAL_RESPONSES.some(r => r.includes('Nice try, buddy!'))).toBe(true);
-    expect(WHIMSICAL_RESPONSES.some(r => r.includes('perfect!'))).toBe(true);
-    
+    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('Nice try, buddy!'))).toBe(true);
+    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('perfect!'))).toBe(true);
+
     // Check for new nerdy accountant responses
-    expect(WHIMSICAL_RESPONSES.some(r => r.includes('Error 404'))).toBe(true);
-    expect(WHIMSICAL_RESPONSES.some(r => r.includes('audit'))).toBe(true);
-    expect(WHIMSICAL_RESPONSES.some(r => r.includes('ledger'))).toBe(true);
+    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('Error 404'))).toBe(true);
+    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('audit'))).toBe(true);
+    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('ledger'))).toBe(true);
   });
 });

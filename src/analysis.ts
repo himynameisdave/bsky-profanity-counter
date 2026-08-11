@@ -1,5 +1,5 @@
-import { BskyAgent } from '@atproto/api';
-import { Mention } from '@prisma/client';
+import type { BskyAgent } from '@atproto/api';
+import type { Mention } from '@prisma/client';
 import * as db from './services/database.js';
 import * as bsky from './services/bluesky.js';
 import * as profanity from './services/profanity.js';
@@ -34,15 +34,17 @@ async function processMention(agent: BskyAgent, mention: Mention) {
         {
           totalCount: freshAnalysis.profanityCount,
           wordCounts: (freshAnalysis.profanityDetails as ProfanityDetails)?.wordCounts,
-          topThree: (freshAnalysis.profanityDetails as ProfanityDetails)?.topProfanities?.slice(0, 3).map((p: { word: string; count: number }, i: number) => ({
-            word: p.word,
-            count: p.count,
-            rank: i + 1
-          })),
-          postCount: freshAnalysis.totalPosts
+          topThree: (freshAnalysis.profanityDetails as ProfanityDetails)?.topProfanities
+            ?.slice(0, 3)
+            .map((p: { word: string; count: number }, i: number) => ({
+              word: p.word,
+              count: p.count,
+              rank: i + 1,
+            })),
+          postCount: freshAnalysis.totalPosts,
         },
         mention.userHandle,
-        freshAnalysis.totalPosts
+        freshAnalysis.totalPosts,
       );
 
       // Get the mention post to reply to
@@ -50,11 +52,11 @@ async function processMention(agent: BskyAgent, mention: Mention) {
 
       if (mentionPost) {
         // Reply to the mention with the analysis results
-        const reply = await bsky.replyToPost(
+        const reply = (await bsky.replyToPost(
           agent,
           { uri: mentionPost.uri, cid: mentionPost.cid },
-          responseMessage
-        ) as { uri?: string; cid?: string } | undefined;
+          responseMessage,
+        )) as { uri?: string; cid?: string } | undefined;
 
         // Extract the reply post ID and URL
         const replyPostId = reply?.uri?.split('/').pop() || '';
@@ -65,20 +67,22 @@ async function processMention(agent: BskyAgent, mention: Mention) {
           mentionId: mention.id,
           replyPostId,
           replyUrl,
-          analysisId: freshAnalysis.id
+          analysisId: freshAnalysis.id,
         });
 
         logger.success(`✅ Used cached analysis to reply to mention for ${mention.userHandle}`);
       } else {
         // The post no longer exists, so we can't reply to it
-        logger.warn(`⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`);
+        logger.warn(
+          `⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`,
+        );
 
         // Still mark the mention as done, but without a reply
         await db.markMentionAsDone({
           mentionId: mention.id,
           replyPostId: '',
           replyUrl: '',
-          analysisId: freshAnalysis.id
+          analysisId: freshAnalysis.id,
         });
 
         logger.info(`✅ Marked mention as processed (post unavailable) for ${mention.userHandle}`);
@@ -104,15 +108,15 @@ async function processMention(agent: BskyAgent, mention: Mention) {
           profanityCount: analysis.totalCount,
           profanityDetails: {
             wordCounts: analysis.wordCounts,
-            topProfanities: analysis.topThree.map(p => ({ word: p.word, count: p.count }))
-          }
+            topProfanities: analysis.topThree.map((p) => ({ word: p.word, count: p.count })),
+          },
         });
 
         // Generate the response message
         const responseMessage = profanity.generateResponseMessage(
           analysis,
           mention.userHandle,
-          posts.length
+          posts.length,
         );
 
         // Get the mention post to reply to
@@ -120,11 +124,11 @@ async function processMention(agent: BskyAgent, mention: Mention) {
 
         if (mentionPost) {
           // Reply to the mention with the analysis results
-          const reply = await bsky.replyToPost(
+          const reply = (await bsky.replyToPost(
             agent,
             { uri: mentionPost.uri, cid: mentionPost.cid },
-            responseMessage
-          ) as { uri?: string; cid?: string } | undefined;
+            responseMessage,
+          )) as { uri?: string; cid?: string } | undefined;
 
           // Extract the reply post ID and URL
           const replyPostId = reply?.uri?.split('/').pop() || '';
@@ -135,23 +139,27 @@ async function processMention(agent: BskyAgent, mention: Mention) {
             mentionId: mention.id,
             replyPostId,
             replyUrl,
-            analysisId: dbAnalysis.id
+            analysisId: dbAnalysis.id,
           });
 
           logger.success(`✅ Analyzed and replied to mention for ${mention.userHandle}`);
         } else {
           // The post no longer exists, so we can't reply to it
-          logger.warn(`⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`);
+          logger.warn(
+            `⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`,
+          );
 
           // Still mark the mention as done, but without a reply
           await db.markMentionAsDone({
             mentionId: mention.id,
             replyPostId: '',
             replyUrl: '',
-            analysisId: dbAnalysis.id
+            analysisId: dbAnalysis.id,
           });
 
-          logger.info(`✅ Marked mention as processed (post unavailable) for ${mention.userHandle}`);
+          logger.info(
+            `✅ Marked mention as processed (post unavailable) for ${mention.userHandle}`,
+          );
         }
       } else {
         logger.warn(`⚠️ No posts found for ${mention.userHandle}`);
@@ -195,7 +203,9 @@ export async function processUnanalyzedMentions(agent: BskyAgent): Promise<void>
   if (mention) {
     await processMention(agent, mention);
   } else {
-    logger.warn('⚠️ No unprocessed mention found to process. Maybe another job already snatched the last one?');
+    logger.warn(
+      '⚠️ No unprocessed mention found to process. Maybe another job already snatched the last one?',
+    );
   }
 
   // Recursively process the remaining mentions

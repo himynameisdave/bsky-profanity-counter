@@ -1,5 +1,5 @@
-import { BskyAgent } from '@atproto/api';
-import { Mention } from '@prisma/client';
+import type { BskyAgent } from '@atproto/api';
+import type { Mention } from '@prisma/client';
 import * as bsky from './bluesky.js';
 import * as db from './database.js';
 import * as logger from './logger.js';
@@ -9,16 +9,16 @@ import * as logger from './logger.js';
  * Persona: nerdy accountant type who takes their job seriously but has a sense of humor.
  */
 export const WHIMSICAL_RESPONSES = [
-  "Nice try, buddy! 😏",
+  'Nice try, buddy! 😏',
   "Hey now, that's not how this works! 🙃",
   "Trying to break me? I'm unbreakable! 💪",
   "I don't analyze myself, I'm perfect! ✨",
   "Plot twist: I'm squeaky clean! 🧼",
-  "Error 404: Self-audit not found! 🤓",
-  "My books are balanced, thank you very much! 📚⚖️",
+  'Error 404: Self-audit not found! 🤓',
+  'My books are balanced, thank you very much! 📚⚖️',
   "I've already reconciled my accounts - they're spotless! 🧮✨",
-  "Attempting to audit the auditor? Frig off buddy!",
-  "My profanity ledger shows zero entries for this account! 📋✅",
+  'Attempting to audit the auditor? Frig off buddy!',
+  'My profanity ledger shows zero entries for this account! 📋✅',
 ];
 
 function getRandomResponse() {
@@ -40,11 +40,11 @@ export async function handleSelfTargeting(agent: BskyAgent, mention: Mention): P
     const randomResponse = getRandomResponse();
 
     // Reply to the mention with the whimsical response
-    const reply = await bsky.replyToPost(
+    const reply = (await bsky.replyToPost(
       agent,
       { uri: mentionPost.uri, cid: mentionPost.cid },
-      randomResponse
-    ) as { uri?: string; cid?: string } | undefined;
+      randomResponse,
+    )) as { uri?: string; cid?: string } | undefined;
 
     // Extract the reply post ID and URL
     const replyPostId = reply?.uri?.split('/').pop() || '';

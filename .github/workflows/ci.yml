@@ -1,14 +1,13 @@
-name: Update Profile Description
+name: CI
 
 on:
-  schedule:
-    # Run every hour at 6 minutes after the hour
-    - cron: '6 * * * *'
-  # Allow manual triggering of the workflow
-  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
 
 jobs:
-  update-profile:
+  ci:
     runs-on: ubuntu-latest
 
     steps:
@@ -45,13 +44,14 @@ jobs:
       - name: Generate Prisma client
         run: pnpm prisma:generate
 
-      - name: Build application
-        run: pnpm build
+      - name: Check formatting
+        run: pnpm format:check
 
-      - name: Update profile description
-        run: pnpm update-profile
-        env:
-          NODE_ENV: production
-          BLUESKY_IDENTIFIER: ${{ secrets.BLUESKY_IDENTIFIER }}
-          BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test

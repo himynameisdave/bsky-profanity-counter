@@ -1,4 +1,4 @@
-import { BskyAgent } from '@atproto/api';
+import type { BskyAgent } from '@atproto/api';
 import { PrismaClient } from '@prisma/client';
 import * as logger from './logger.js';
 
@@ -9,17 +9,20 @@ const prisma = new PrismaClient();
  * excluding the bot itself (profanity.accountant)
  */
 export async function getTotalProfanityCount(): Promise<number> {
+  // `_sum` is Prisma's aggregate API, not ours to rename
+  // oxlint-disable-next-line no-underscore-dangle
   const result = await prisma.analysis.aggregate({
     _sum: {
-      profanityCount: true
+      profanityCount: true,
     },
     where: {
       userHandle: {
-        not: 'profanity.accountant'
-      }
-    }
+        not: 'profanity.accountant',
+      },
+    },
   });
 
+  // oxlint-disable-next-line no-underscore-dangle
   return result._sum.profanityCount || 0;
 }
 
@@ -35,7 +38,7 @@ export function formatNumber(num: number): string {
  */
 export function generateProfileDescription(totalCount: number): string {
   const formattedCount = formatNumber(totalCount);
-  
+
   return `Tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (it may take me a few minutes to respond).
 
 ${formattedCount} total profanities counted, you pottymouths!`;
@@ -47,20 +50,22 @@ ${formattedCount} total profanities counted, you pottymouths!`;
 export async function updateProfileDescription(agent: BskyAgent): Promise<void> {
   try {
     logger.info('📊 Getting total profanity count...');
-    
+
     const totalCount = await getTotalProfanityCount();
     logger.info(`📈 Total profanity count: ${formatNumber(totalCount)}`);
-    
+
     const newDescription = generateProfileDescription(totalCount);
     logger.info('📝 Updating profile description...');
-    
+
     // Update the profile with the new description
     await agent.upsertProfile((existing) => ({
       ...existing,
-      description: newDescription
+      description: newDescription,
     }));
-    
-    logger.success(`✅ Profile description updated with ${formatNumber(totalCount)} total profanities`);
+
+    logger.success(
+      `✅ Profile description updated with ${formatNumber(totalCount)} total profanities`,
+    );
   } catch (error) {
     logger.error(`❌ Error updating profile description: ${error}`);
     throw error;

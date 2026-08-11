@@ -1,4 +1,4 @@
-import { BskyAgent, AppBskyFeedDefs, AppBskyRichtextFacet } from '@atproto/api';
+import { BskyAgent, type AppBskyFeedDefs, type AppBskyRichtextFacet } from '@atproto/api';
 import dotenv from 'dotenv';
 import * as logger from './logger.js';
 import type { Notification } from '../types.js';
@@ -6,8 +6,8 @@ import type { Notification } from '../types.js';
 dotenv.config();
 
 // Environment variables
-const BLUESKY_IDENTIFIER = process.env.BLUESKY_IDENTIFIER;
-const BLUESKY_PASSWORD = process.env.BLUESKY_PASSWORD;
+const { BLUESKY_IDENTIFIER } = process.env;
+const { BLUESKY_PASSWORD } = process.env;
 
 if (!BLUESKY_IDENTIFIER || !BLUESKY_PASSWORD) {
   throw new Error('Missing Bluesky credentials in environment variables');
@@ -31,7 +31,7 @@ export const createAgent = async (): Promise<BskyAgent> => {
 
 // Get notifications where the bot is mentioned
 export const getMentions = async (agent: BskyAgent) => {
-  let allNotifications: Notification[] = [];
+  const allNotifications: Notification[] = [];
 
   logger.info('🔍 Getting notifications...');
 
@@ -40,7 +40,7 @@ export const getMentions = async (agent: BskyAgent) => {
   const fetchNotificationsPage = async (currentCursor?: string): Promise<void> => {
     const response = await agent.listNotifications({
       limit: 100,
-      cursor: currentCursor
+      cursor: currentCursor,
     });
 
     allNotifications.push(...response.data.notifications);
@@ -57,7 +57,7 @@ export const getMentions = async (agent: BskyAgent) => {
   // Start the recursive fetching process
   await fetchNotificationsPage();
 
-  if (allNotifications.length) {
+  if (allNotifications.length > 0) {
     logger.info(`📥 Found ${allNotifications.length} notifications`);
   } else {
     logger.info('❌ No notifications found');
@@ -66,9 +66,7 @@ export const getMentions = async (agent: BskyAgent) => {
 
   // Filter for mentions in replies that we haven't processed yet
   const unreadMentions = allNotifications.filter(
-    (notification) =>
-      notification.reason === 'mention' &&
-      !notification.isRead
+    (notification) => notification.reason === 'mention' && !notification.isRead,
   );
 
   logger.info(`📤 Found ${unreadMentions.length} unread mentions`);
@@ -80,17 +78,26 @@ export const getMentions = async (agent: BskyAgent) => {
 export const markNotificationsAsRead = async (agent: BskyAgent) => {
   const seenAt = new Date().toISOString();
   await agent.app.bsky.notification.updateSeen({
-    seenAt: seenAt
+    seenAt,
   });
   logger.success(`📑 Successfully marked notifications as read up to ${seenAt}`);
 };
 
+// Post records are loosely typed, so narrow before reading `createdAt`
+const getPostDate = (post: AppBskyFeedDefs.PostView | undefined): Date | null => {
+  const record = post?.record as { createdAt?: unknown } | undefined;
+  return typeof record?.createdAt === 'string' ? new Date(record.createdAt) : null;
+};
+
 // Get user's posts
-export const getUserPosts = async (agent: BskyAgent, did: string): Promise<AppBskyFeedDefs.PostView[]> => {
+export const getUserPosts = async (
+  agent: BskyAgent,
+  did: string,
+): Promise<AppBskyFeedDefs.PostView[]> => {
   const allPosts: AppBskyFeedDefs.PostView[] = [];
   let cursor;
   const MAX_POSTS = 25_000; // Maximum number of posts to retrieve
-  const CHUNK_SIZE = 100;  // Size of each chunk (API limit)
+  const CHUNK_SIZE = 100; // Size of each chunk (API limit)
   const ONE_YEAR_AGO = new Date();
   ONE_YEAR_AGO.setFullYear(ONE_YEAR_AGO.getFullYear() - 1);
 
@@ -105,6 +112,8 @@ export const getUserPosts = async (agent: BskyAgent, did: string): Promise<AppBs
     chunkCount++;
 
     try {
+      // Pagination is inherently sequential: each request needs the previous cursor
+      // oxlint-disable-next-line no-await-in-loop
       const response = await agent.getAuthorFeed({
         actor: did,
         limit: CHUNK_SIZE,
@@ -125,36 +134,36 @@ export const getUserPosts = async (agent: BskyAgent, did: string): Promise<AppBs
       }
 
       // Check the date of the last post in this chunk
-      if (posts.length > 0) {
-        const lastPost = posts[posts.length - 1];
-        const lastPostRecord = lastPost.record as any;
+      const lastPostDate = getPostDate(posts[posts.length - 1]);
 
-        if (lastPostRecord?.createdAt) {
-          const postDate = new Date(lastPostRecord.createdAt);
-          oldestPostDate = postDate;
+      if (lastPostDate) {
+        oldestPostDate = lastPostDate;
 
-          // Check if we've reached posts older than one year
-          if (postDate < ONE_YEAR_AGO) {
-            reachedYearOld = true;
-            logger.info(`🕒 Reached posts older than one year (${postDate.toISOString()})`);
+        // Check if we've reached posts older than one year
+        if (lastPostDate < ONE_YEAR_AGO) {
+          reachedYearOld = true;
+          logger.info(`🕒 Reached posts older than one year (${lastPostDate.toISOString()})`);
 
-            // Filter out posts older than one year
-            const recentPosts = posts.filter(post => {
-              const record = post.record as any;
-              return record?.createdAt && new Date(record.createdAt) >= ONE_YEAR_AGO;
-            });
+          // Filter out posts older than one year
+          const recentPosts = posts.filter((post) => {
+            const postDate = getPostDate(post);
+            return postDate !== null && postDate >= ONE_YEAR_AGO;
+          });
 
-            allPosts.push(...recentPosts);
-            logger.info(`✅ Processed chunk #${chunkCount}: Added ${recentPosts.length} posts (within last year), reached year limit`);
-            break;
-          }
+          allPosts.push(...recentPosts);
+          logger.info(
+            `✅ Processed chunk #${chunkCount}: Added ${recentPosts.length} posts (within last year), reached year limit`,
+          );
+          break;
         }
       }
 
       // Add all posts from this chunk
       allPosts.push(...posts);
 
-      logger.info(`✅ Processed chunk #${chunkCount}: Added ${posts.length} posts (total: ${allPosts.length})`);
+      logger.info(
+        `✅ Processed chunk #${chunkCount}: Added ${posts.length} posts (total: ${allPosts.length})`,
+      );
 
       // Break if no cursor for next page
       if (!response.data.cursor) {
@@ -162,8 +171,7 @@ export const getUserPosts = async (agent: BskyAgent, did: string): Promise<AppBs
         break;
       }
 
-      cursor = response.data.cursor;
-
+      ({ cursor } = response.data);
     } catch (error) {
       logger.error(`❌ Error fetching posts chunk #${chunkCount}: ${error || 'unknown'}`);
     }
@@ -189,8 +197,8 @@ export const getPost = async (agent: BskyAgent, uri: string) => {
       throw new Error(`Invalid URI format: ${uri}`);
     }
 
-    const repo = uriParts[2];
-    const rkey = uriParts[4];
+    // at://<repo>/<collection>/<rkey>
+    const [repo, , rkey] = uriParts.slice(2);
 
     // Use the correct API method for getting a post
     const response = await agent.getPost({ repo, rkey });
@@ -207,7 +215,7 @@ export const replyToPost = async (
   replyTo: { uri: string; cid: string },
   text: string,
   rootUri?: string,
-  rootCid?: string
+  rootCid?: string,
 ) => {
   logger.info(`🗣️ Replying to ${replyTo.uri}...`);
 
@@ -215,58 +223,50 @@ export const replyToPost = async (
   const facets: AppBskyRichtextFacet.Main[] = [];
 
   // Regular expression to find mentions in the text
-  const mentionRegex = /@([a-zA-Z0-9.-]+)/g;
+  const mentionRegex = /@(?<handle>[a-zA-Z0-9.-]+)/gu;
   let match;
 
   while ((match = mentionRegex.exec(text)) !== null) {
-    const handle = match[1];
+    const handle = match.groups?.handle ?? '';
     const start = match.index;
     const end = start + match[0].length;
 
     try {
-      // Resolve the handle to a DID
+      // Handles are resolved one at a time as the regex walks the text
+      // oxlint-disable-next-line no-await-in-loop
       const resolveResponse = await agent.resolveHandle({ handle });
-      const did = resolveResponse.data.did;
+      const { did } = resolveResponse.data;
 
       // Add facet for the mention
       facets.push({
         index: {
           byteStart: start,
-          byteEnd: end
+          byteEnd: end,
         },
         features: [
           {
             $type: 'app.bsky.richtext.facet#mention',
-            did
-          }
-        ]
+            did,
+          },
+        ],
       } as AppBskyRichtextFacet.Main);
     } catch (error) {
       logger.error(`❌ Error resolving handle ${handle}\n\t- ${error || 'unknown'}`);
     }
   }
 
-  // Set up the reply structure
-  const reply: any = {
-    parent: replyTo
+  // Set up the reply structure. If rootUri and rootCid are provided, use them for
+  // the root; otherwise use the parent (for direct replies to top-level posts).
+  const reply = {
+    parent: replyTo,
+    root: rootUri && rootCid ? { uri: rootUri, cid: rootCid } : replyTo,
   };
-
-  // If rootUri and rootCid are provided, use them for the root
-  // Otherwise, use the parent as the root (for direct replies to top-level posts)
-  if (rootUri && rootCid) {
-    reply.root = {
-      uri: rootUri,
-      cid: rootCid
-    };
-  } else {
-    reply.root = replyTo;
-  }
 
   // Post with facets if any were created
   return agent.post({
     text,
     facets: facets.length > 0 ? facets : undefined,
-    reply: reply
+    reply,
   });
 };
 

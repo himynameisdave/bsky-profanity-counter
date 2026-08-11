@@ -1,6 +1,5 @@
 import dotenv from 'dotenv';
-import { ProfanityAnalysis } from './profanity.js';
-import * as logger from './logger.js';
+import type { ProfanityAnalysis } from './profanity.js';
 
 dotenv.config();
 
@@ -15,11 +14,11 @@ type CacheEntry = {
 
 // Simple in-memory cache
 class Cache {
-  private cache: Record<string, CacheEntry> = {};
+  private cache = new Map<string, CacheEntry>();
 
   // Get an item from the cache
   get(key: string): ProfanityAnalysis | null {
-    const entry = this.cache[key];
+    const entry = this.cache.get(key);
 
     // If entry doesn't exist or is expired, return null
     if (!entry || Date.now() - entry.timestamp > CACHE_DURATION_MS) {
@@ -36,21 +35,21 @@ class Cache {
 
   // Set an item in the cache
   set(key: string, data: ProfanityAnalysis): void {
-    this.cache[key] = {
+    this.cache.set(key, {
       timestamp: Date.now(),
-      data
-    };
+      data,
+    });
   }
 
   // Clear expired entries from the cache
   cleanup(): void {
     const now = Date.now();
 
-    Object.keys(this.cache).forEach(key => {
-      if (now - this.cache[key].timestamp > CACHE_DURATION_MS) {
-        delete this.cache[key];
+    for (const [key, entry] of this.cache) {
+      if (now - entry.timestamp > CACHE_DURATION_MS) {
+        this.cache.delete(key);
       }
-    });
+    }
   }
 }
 

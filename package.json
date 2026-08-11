@@ -1,11 +1,17 @@
 {
   "name": "profanity.accountant",
-  "description": "🤬 A bot for Bluesky which tells you how much profanity a user has posted..",
   "version": "1.0.0",
   "private": true,
+  "description": "🤬 A bot for Bluesky which tells you how much profanity a user has posted..",
   "type": "module",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint -c oxlint.config.ts --deny-warnings",
+    "lint:fix": "oxlint -c oxlint.config.ts --deny-warnings --fix",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
     "start": "node dist/index.js",
     "dev": "ts-node-esm src/index.ts",
     "update-profile": "node dist/update-profile.js",
@@ -20,9 +26,6 @@
     "db:push": "prisma db push",
     "db:sync": "prisma db pull && prisma generate"
   },
-  "engines": {
-    "node": ">=22.14.0"
-  },
   "dependencies": {
     "@atproto/api": "^0.15.23",
     "@prisma/client": "^6.11.1",
@@ -31,9 +34,15 @@
     "prisma": "^6.11.1"
   },
   "devDependencies": {
+    "@himynameisdave/oxlint-config": "~1.1.0",
     "@types/node": "^22.16.0",
+    "oxfmt": "^0.63.0",
+    "oxlint": "^1.78.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=22.14.0"
   }
 }

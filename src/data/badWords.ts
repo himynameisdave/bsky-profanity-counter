@@ -4,7 +4,7 @@
  * - https://github.com/rodgeraraujo/profanity/blob/main/src/data/dictionary.ts
  * - https://github.com/coffee-and-fun/google-profanity-words/blob/main/data/en.txt
  */
-const badWords: Set<string> = new Set([
+const badWords = new Set<string>([
   '2 girls 1 cup',
   '2g1c',
   '4r5e',
