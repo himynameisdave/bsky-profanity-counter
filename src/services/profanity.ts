@@ -1,4 +1,4 @@
-import { AppBskyFeedDefs } from '@atproto/api';
+import type { AppBskyFeedDefs } from '@atproto/api';
 import BAD_WORDS from '../data/badWords.js';
 
 // Type for profanity analysis results
@@ -21,15 +21,15 @@ export const analyzeProfanity = (text: string): Record<string, number> => {
   const lowerText = text.toLowerCase();
 
   // Check for each profanity in the text
-  BAD_WORDS.forEach(word => {
+  for (const word of BAD_WORDS) {
     // Create a regex that matches the word as a whole word
-    const regex = new RegExp(`\\b${word}\\b`, 'g');
+    const regex = new RegExp(`\\b${word}\\b`, 'gu');
     const matches = lowerText.match(regex);
 
     if (matches) {
       wordCounts[word] = matches.length;
     }
-  });
+  }
 
   return wordCounts;
 };
@@ -39,56 +39,56 @@ export const analyzePosts = (posts: AppBskyFeedDefs.PostView[]): ProfanityAnalys
   const totalWordCounts: Record<string, number> = {};
 
   // Process each post
-  posts.forEach(post => {
-    // Try to extract text from the post record
-    let text = '';
-
-    // The record property might be any type, so we need to use type assertions
-    const record = post.record as any;
-    if (record && typeof record.text === 'string') {
-      text = record.text;
-    }
+  for (const post of posts) {
+    // The record property is loosely typed, so narrow it before reading `text`
+    const record = post.record as { text?: unknown } | undefined;
+    const text = typeof record?.text === 'string' ? record.text : '';
 
     if (text) {
       const postCounts = analyzeProfanity(text);
 
       // Add counts to the total
-      Object.entries(postCounts).forEach(([word, count]) => {
+      for (const [word, count] of Object.entries(postCounts)) {
         totalWordCounts[word] = (totalWordCounts[word] || 0) + count;
-      });
+      }
     }
-  });
+  }
 
   // Calculate total count
   const totalCount = Object.values(totalWordCounts).reduce((sum, count) => sum + count, 0);
 
-  // Find top three most used profanities
-  const topThree: { word: string; count: number; rank: number }[] = [];
-
-  // Sort all word counts in descending order
+  // Sort all word counts in descending order, take only the top 3
   const sortedEntries = Object.entries(totalWordCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3); // Take only the top 3
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, 3);
 
   // Create the top three array with ranks
-  sortedEntries.forEach(([word, count], index) => {
-    topThree.push({
-      word,
-      count,
-      rank: index + 1 // Rank 1, 2, or 3
-    });
-  });
+  const topThree = sortedEntries.map(([word, count], index) => ({
+    word,
+    count,
+    rank: index + 1, // Rank 1, 2, or 3
+  }));
 
   return {
     totalCount,
     wordCounts: totalWordCounts,
     topThree,
-    postCount: posts.length // Add the number of posts that were analyzed
+    postCount: posts.length, // Add the number of posts that were analyzed
   };
 };
 
+const MEDALS: Record<number, string> = {
+  1: '🥇',
+  2: '🥈',
+  3: '🥉',
+};
+
 // Generate a response message based on the analysis
-export const generateResponseMessage = (analysis: ProfanityAnalysis, username: string, postCount: number): string => {
+export const generateResponseMessage = (
+  analysis: ProfanityAnalysis,
+  username: string,
+  postCount: number,
+): string => {
   if (analysis.totalCount === 0) {
     return `@${username} has been a good citizen!\nNo profanity found in their last ${postCount.toLocaleString('en-CA')} posts.`;
   }
@@ -97,24 +97,12 @@ export const generateResponseMessage = (analysis: ProfanityAnalysis, username: s
 
   // Add top three profanities with medal emojis if available
   if (analysis.topThree.length > 0) {
-    message += "\n\n";
+    message += '\n\n';
 
-    analysis.topThree.forEach(item => {
-      let medal = '';
-      switch (item.rank) {
-        case 1:
-          medal = '🥇';
-          break;
-        case 2:
-          medal = '🥈';
-          break;
-        case 3:
-          medal = '🥉';
-          break;
-      }
-
+    for (const item of analysis.topThree) {
+      const medal = MEDALS[item.rank] ?? '';
       message += `${medal} "${item.word}" (${item.count.toLocaleString('en-CA')} times)\n`;
-    });
+    }
   }
 
   return message;

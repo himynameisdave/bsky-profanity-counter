@@ -1,7 +1,10 @@
-import { BskyAgent } from '@atproto/api';
+import type { BskyAgent } from '@atproto/api';
 import * as bsky from './services/bluesky.js';
 import * as db from './services/database.js';
-import { Notification } from './types.js';
+import type { Notification } from './types.js';
+
+// Notification records are loosely typed, so narrow before reading the reply parent
+type NotificationRecord = { reply?: { parent?: { uri?: string } } };
 
 /**
  * Takes a Bluesky notification and maps it to our database Mention schema structure
@@ -23,15 +26,49 @@ function notificationToMention(notification: Notification) {
   const postUrl = notification.uri;
 
   // Determine if this is a reply by checking the record structure
-  const record = notification.record as any;
-  const isReply = !!(record?.reply?.parent);
+  const record = notification.record as NotificationRecord | undefined;
+  const isReply = Boolean(record?.reply?.parent);
 
   return {
     userHandle,
     postId,
     postUrl,
-    isReply
+    isReply,
   };
+}
+
+/**
+ * Resolve the handle of the author of the post a reply is pointing at.
+ * Returns null when the parent post (or its author) can't be looked up.
+ */
+async function getParentAuthorHandle(
+  agent: BskyAgent,
+  notification: Notification,
+): Promise<string | null> {
+  const record = notification.record as NotificationRecord | undefined;
+  const parentUri = record?.reply?.parent?.uri;
+
+  if (!parentUri) {
+    return null;
+  }
+
+  try {
+    // Get parent post details using the utility function
+    const parentPostResponse = await bsky.getPost(agent, parentUri);
+
+    if (!parentPostResponse) {
+      return null;
+    }
+
+    // Get the author's DID from the URI, then their profile
+    const [authorDid] = parentPostResponse.uri.split('/').slice(2);
+    const profileResponse = await bsky.getProfile(agent, authorDid);
+
+    return profileResponse.handle;
+  } catch {
+    // If we can't get the parent post, we'll keep the original mention author
+    return null;
+  }
 }
 
 /**
@@ -39,45 +76,27 @@ function notificationToMention(notification: Notification) {
  * and stores it in the database.
  */
 export default async function storeMentions(agent: BskyAgent, mentions: Notification[]) {
-  // Process mentions sequentially to handle parent post lookups properly
-  await Promise.all(mentions.map(async (mention) => {
-    try {
-      // Start with basic mention info
-      const mentionData = notificationToMention(mention);
+  await Promise.all(
+    mentions.map(async (mention) => {
+      try {
+        // Start with basic mention info
+        const mentionData = notificationToMention(mention);
 
-      // If this is a reply, we need to get the parent post author instead
-      if (mentionData.isReply) {
-        const record = mention.record as any;
-        const parentUri = record?.reply?.parent?.uri;
-        if (parentUri) {
-          try {
-            // Get parent post details using the utility function
-            const parentPostResponse = await bsky.getPost(agent, parentUri);
-
-            if (parentPostResponse) {
-              // Get the author's DID from the URI
-              const authorDid = parentPostResponse.uri.split('/')[2];
-
-              // Get the profile of the parent post's author
-              const profileResponse = await bsky.getProfile(agent, authorDid);
-
-              // Override the userHandle to be the parent author
-              mentionData.userHandle = profileResponse.handle;
-            }
-          } catch (error) {
-            console.error('Error fetching parent post:', error);
-            // If we can't get the parent post, we'll keep the original mention author
+        // If this is a reply, we analyze the parent post author instead
+        if (mentionData.isReply) {
+          const parentHandle = await getParentAuthorHandle(agent, mention);
+          if (parentHandle) {
+            mentionData.userHandle = parentHandle;
           }
         }
+
+        // Store in database
+        await db.storeMention(mentionData);
+      } catch {
+        // A single bad mention shouldn't stop the rest from being stored
       }
-
-      // Store in database
-      await db.storeMention(mentionData);
-
-    } catch (error) {
-      console.error('Error processing mention:', error);
-    }
-  }));
+    }),
+  );
 
   // After storing all mentions, mark notifications as read
   if (mentions.length > 0) {

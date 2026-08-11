@@ -1,9 +1,5 @@
 import dotenv from 'dotenv';
-import { analyzePosts, generateResponseMessage, ProfanityAnalysis } from './services/profanity.js';
-import {
-  createAgent,
-  getMentions,
-} from './services/bluesky.js';
+import { createAgent, getMentions } from './services/bluesky.js';
 import * as logger from './services/logger.js';
 import * as db from './services/database.js';
 import storeMentions from './mentions.js';

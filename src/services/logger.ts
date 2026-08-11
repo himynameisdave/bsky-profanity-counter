@@ -5,13 +5,13 @@ export const info = createLogger('info', {
 });
 
 export const success = createLogger('success', {
-  taskColor: 'bgGreenBright'
+  taskColor: 'bgGreenBright',
 });
 
 export const error = createLogger('error', {
-  taskColor: 'bgRedBright'
+  taskColor: 'bgRedBright',
 });
 
 export const warn = createLogger('warn', {
-  taskColor: 'bgYellowBright'
+  taskColor: 'bgYellowBright',
 });

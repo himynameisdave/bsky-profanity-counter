@@ -1,0 +1,7 @@
+#!/bin/sh
+# Everything must be formatted and lint-clean before it can be committed.
+# Enabled by the `prepare` script, which points core.hooksPath at this directory.
+set -e
+
+pnpm format:check
+pnpm lint

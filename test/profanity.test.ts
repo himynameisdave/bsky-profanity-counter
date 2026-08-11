@@ -1,14 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { analyzePosts, generateResponseMessage, ProfanityAnalysis } from '../src/services/profanity.js';
-import { AppBskyFeedDefs } from '@atproto/api';
+import {
+  analyzePosts,
+  generateResponseMessage,
+  type ProfanityAnalysis,
+} from '../src/services/profanity.js';
+import type { AppBskyFeedDefs } from '@atproto/api';
 
 // Mock data
-const createMockPost = (text: string): AppBskyFeedDefs.PostView => {
-  return {
+const createMockPost = (text: string): AppBskyFeedDefs.PostView =>
+  ({
     uri: 'at://fake-uri',
     cid: 'fake-cid',
     record: {
-      text: text,
+      text,
       $type: 'app.bsky.feed.post',
       createdAt: new Date().toISOString(),
     },
@@ -18,11 +22,10 @@ const createMockPost = (text: string): AppBskyFeedDefs.PostView => {
     },
     indexedAt: new Date().toISOString(),
     viewer: {},
-  } as AppBskyFeedDefs.PostView;
-};
+  }) as AppBskyFeedDefs.PostView;
 
 describe('Profanity Service', () => {
-  describe('analyzePosts', () => {
+  describe(analyzePosts, () => {
     it('should track the top 3 profanities correctly', () => {
       // Create posts with different profanities
       const posts = [
@@ -39,33 +42,18 @@ describe('Profanity Service', () => {
 
       // Expected: "damn" (3), "hell" (3), "shit" (2)
       expect(result.totalCount).toBeGreaterThan(0);
-      expect(result.topThree.length).toBeLessThanOrEqual(3);
+      expect(result.topThree).toHaveLength(3);
 
       // Verify ranks are assigned correctly
-      if (result.topThree.length > 0) {
-        expect(result.topThree[0].rank).toBe(1);
-      }
-      if (result.topThree.length > 1) {
-        expect(result.topThree[1].rank).toBe(2);
-      }
-      if (result.topThree.length > 2) {
-        expect(result.topThree[2].rank).toBe(3);
-      }
+      expect(result.topThree.map((item) => item.rank)).toStrictEqual([1, 2, 3]);
 
-      // Verify the top 3 words (depending on their counts, "damn" and "hell" could be in either order)
-      const topWords = result.topThree.map(item => item.word);
-      expect(topWords).toContain('damn');
-      expect(topWords).toContain('hell');
-
-      // Check if "damn" and "hell" are in the top two positions
+      // "damn" and "hell" both appear 3 times, so they take the top two in either order
       const topTwoWords = new Set([result.topThree[0].word, result.topThree[1].word]);
-      expect(topTwoWords.has('damn')).toBeTruthy();
-      expect(topTwoWords.has('hell')).toBeTruthy();
+      expect(topTwoWords.has('damn')).toBe(true);
+      expect(topTwoWords.has('hell')).toBe(true);
 
-      // Check if "shit" is the third word
-      if (result.topThree.length > 2) {
-        expect(result.topThree[2].word).toBe('shit');
-      }
+      // "shit" appears twice, putting it third
+      expect(result.topThree[2].word).toBe('shit');
     });
 
     it('should handle posts with no profanity', () => {
@@ -76,19 +64,19 @@ describe('Profanity Service', () => {
 
       const result = analyzePosts(posts);
       expect(result.totalCount).toBe(0);
-      expect(result.topThree.length).toBe(0);
+      expect(result.topThree).toHaveLength(0);
     });
   });
 
-  describe('generateResponseMessage', () => {
+  describe(generateResponseMessage, () => {
     it('should generate message with medal emojis for top 3 profanities', () => {
       const analysis: ProfanityAnalysis = {
         totalCount: 10,
         wordCounts: {
-          'damn': 4,
-          'hell': 3,
-          'shit': 2,
-          'crap': 1,
+          damn: 4,
+          hell: 3,
+          shit: 2,
+          crap: 1,
         },
         topThree: [
           { word: 'damn', count: 4, rank: 1 },
