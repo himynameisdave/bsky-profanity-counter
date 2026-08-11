@@ -40,11 +40,8 @@ export async function handleSelfTargeting(agent: BskyAgent, mention: Mention): P
     const randomResponse = getRandomResponse();
 
     // Reply to the mention with the whimsical response
-    const reply = (await bsky.replyToPost(
-      agent,
-      { uri: mentionPost.uri, cid: mentionPost.cid },
-      randomResponse,
-    )) as { uri?: string; cid?: string } | undefined;
+    const posted = await bsky.replyToPost(agent, mentionPost, randomResponse);
+    const reply = posted as { uri?: string; cid?: string } | undefined;
 
     // Extract the reply post ID and URL
     const replyPostId = reply?.uri?.split('/').pop() || '';
