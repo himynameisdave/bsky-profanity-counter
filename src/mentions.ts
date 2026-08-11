@@ -1,6 +1,7 @@
 import type { BskyAgent } from '@atproto/api';
 import * as bsky from './services/bluesky.js';
 import * as db from './services/database.js';
+import * as logger from './services/logger.js';
 import type { Notification } from './types.js';
 
 // Notification records are loosely typed, so narrow before reading the reply parent
@@ -74,32 +75,82 @@ async function getParentAuthorHandle(
 /**
  * Takes each notification from Bluesky, converts it to our Mention format,
  * and stores it in the database.
+ *
+ * `latestIndexedAt` is the newest notification in the batch we fetched (see
+ * bsky.getMentions). Once everything is safely stored we mark notifications as
+ * read up to that point — never up to "now", which would swallow anything that
+ * arrived while this run was in flight.
  */
-export default async function storeMentions(agent: BskyAgent, mentions: Notification[]) {
-  await Promise.all(
-    mentions.map(async (mention) => {
-      try {
-        // Start with basic mention info
-        const mentionData = notificationToMention(mention);
-
-        // If this is a reply, we analyze the parent post author instead
-        if (mentionData.isReply) {
-          const parentHandle = await getParentAuthorHandle(agent, mention);
-          if (parentHandle) {
-            mentionData.userHandle = parentHandle;
-          }
-        }
-
-        // Store in database
-        await db.storeMention(mentionData);
-      } catch {
-        // A single bad mention shouldn't stop the rest from being stored
-      }
-    }),
-  );
-
-  // After storing all mentions, mark notifications as read
-  if (mentions.length > 0) {
-    await bsky.markNotificationsAsRead(agent);
+export default async function storeMentions(
+  agent: BskyAgent,
+  mentions: Notification[],
+  latestIndexedAt: string | null,
+) {
+  if (!latestIndexedAt) {
+    // Nothing was fetched, so there's no read cursor to advance
+    return;
   }
+
+  // Process mentions sequentially, oldest first: the read cursor can only move
+  // past a mention once that mention is actually in the database
+  const ordered = mentions.toSorted((a, b) => Date.parse(a.indexedAt) - Date.parse(b.indexedAt));
+
+  let lastStoredIndexedAt: string | null = null;
+  let firstFailure: Notification | null = null;
+
+  for (const mention of ordered) {
+    try {
+      // Start with basic mention info
+      const mentionData = notificationToMention(mention);
+
+      // If this is a reply, we analyze the parent post author instead
+      if (mentionData.isReply) {
+        // Deliberately sequential: each mention gates how far the read cursor moves
+        // oxlint-disable-next-line no-await-in-loop
+        const parentHandle = await getParentAuthorHandle(agent, mention);
+        if (parentHandle) {
+          mentionData.userHandle = parentHandle;
+        }
+      }
+
+      // Store in database (an upsert, so replaying a notification is a no-op)
+      // oxlint-disable-next-line no-await-in-loop
+      await db.storeMention(mentionData);
+
+      if (!firstFailure) {
+        lastStoredIndexedAt = mention.indexedAt;
+      }
+    } catch (error) {
+      // A single bad mention shouldn't stop the rest from being stored, but it
+      // does stop the read cursor from moving past it
+      logger.error(`❌ Error storing mention ${mention.uri}\n\t- ${error}`);
+
+      firstFailure ??= mention;
+    }
+  }
+
+  // Don't move the cursor onto (or past) a mention we failed to store, otherwise
+  // it gets marked read and is never retried
+  if (
+    firstFailure &&
+    lastStoredIndexedAt &&
+    Date.parse(lastStoredIndexedAt) >= Date.parse(firstFailure.indexedAt)
+  ) {
+    lastStoredIndexedAt = null;
+  }
+
+  const seenAt = firstFailure ? lastStoredIndexedAt : latestIndexedAt;
+
+  if (firstFailure) {
+    logger.warn(
+      `⚠️ Leaving notifications from ${firstFailure.indexedAt} onwards unread so they're retried next run`,
+    );
+  }
+
+  if (!seenAt) {
+    logger.warn('🚧 Not marking any notifications as read this run');
+    return;
+  }
+
+  await bsky.markNotificationsAsRead(agent, seenAt);
 }

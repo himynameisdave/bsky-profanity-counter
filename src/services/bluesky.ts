@@ -29,54 +29,106 @@ export const createAgent = async (): Promise<BskyAgent> => {
   return agent;
 };
 
-// Get notifications where the bot is mentioned
-export const getMentions = async (agent: BskyAgent) => {
-  const allNotifications: Notification[] = [];
+// Most pages of notifications we're willing to walk in a single run
+const MAX_NOTIFICATION_PAGES = 25;
+// Belt-and-suspenders cutoff, in case we never hit a fully-read page
+const NOTIFICATION_LOOKBACK_DAYS = 7;
+const NOTIFICATIONS_PER_PAGE = 100;
 
-  logger.info('🔍 Getting notifications...');
-
-  // Iterate through all pages of notifications
-  // Recursive function to fetch notifications page by page
-  const fetchNotificationsPage = async (currentCursor?: string): Promise<void> => {
-    const response = await agent.listNotifications({
-      limit: 100,
-      cursor: currentCursor,
-    });
-
-    allNotifications.push(...response.data.notifications);
-
-    // Base case: no more pages to fetch
-    if (!response.data.cursor) {
-      return;
-    }
-
-    // Recursive case: fetch the next page
-    return fetchNotificationsPage(response.data.cursor);
-  };
-
-  // Start the recursive fetching process
-  await fetchNotificationsPage();
-
-  if (allNotifications.length > 0) {
-    logger.info(`📥 Found ${allNotifications.length} notifications`);
-  } else {
-    logger.info('❌ No notifications found');
-    return [];
-  }
-
-  // Filter for mentions in replies that we haven't processed yet
-  const unreadMentions = allNotifications.filter(
-    (notification) => notification.reason === 'mention' && !notification.isRead,
-  );
-
-  logger.info(`📤 Found ${unreadMentions.length} unread mentions`);
-
-  return unreadMentions;
+export type MentionsBatch = {
+  // The unread mentions we still owe a reply to
+  mentions: Notification[];
+  // The `indexedAt` of the newest notification in the batch we actually fetched.
+  // This is what `seenAt` should be derived from — see markNotificationsAsRead.
+  // `null` when there was nothing to fetch.
+  latestIndexedAt: string | null;
 };
 
-//  Marks all notifications as read
-export const markNotificationsAsRead = async (agent: BskyAgent) => {
-  const seenAt = new Date().toISOString();
+const toTime = (indexedAt: string) => Date.parse(indexedAt);
+
+// Get notifications where the bot is mentioned
+export const getMentions = async (agent: BskyAgent): Promise<MentionsBatch> => {
+  logger.info('🔍 Getting notifications...');
+
+  const cutoff = Date.now() - NOTIFICATION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+  const mentions: Notification[] = [];
+  let latestIndexedAt: string | null = null;
+  let fetchedCount = 0;
+  let cursor: string | undefined;
+  let page = 0;
+  let keepPaging = true;
+
+  // Notifications come back newest-first, so we only page far enough back to
+  // cover everything that is still unread — not the account's whole history.
+  while (keepPaging && page < MAX_NOTIFICATION_PAGES) {
+    page++;
+
+    // Pagination is inherently sequential: each request needs the previous cursor
+    // oxlint-disable-next-line no-await-in-loop
+    const response = await agent.listNotifications({
+      limit: NOTIFICATIONS_PER_PAGE,
+      cursor,
+    });
+
+    const { notifications } = response.data;
+
+    if (notifications.length === 0) {
+      keepPaging = false;
+      break;
+    }
+
+    fetchedCount += notifications.length;
+
+    for (const notification of notifications) {
+      if (!latestIndexedAt || toTime(notification.indexedAt) > toTime(latestIndexedAt)) {
+        latestIndexedAt = notification.indexedAt;
+      }
+
+      if (notification.reason === 'mention' && !notification.isRead) {
+        mentions.push(notification);
+      }
+    }
+
+    const oldestOnPage = notifications[notifications.length - 1];
+
+    if (notifications.every((notification) => notification.isRead)) {
+      // Everything on this page has been read, so everything older has been too
+      logger.info(`🛑 Stopping after page #${page}: it was entirely read`);
+      keepPaging = false;
+    } else if (toTime(oldestOnPage.indexedAt) < cutoff) {
+      logger.info(
+        `🕒 Stopping after page #${page}: reached notifications older than ${NOTIFICATION_LOOKBACK_DAYS} days`,
+      );
+      keepPaging = false;
+    } else if (!response.data.cursor) {
+      keepPaging = false;
+    } else {
+      cursor = response.data.cursor;
+    }
+  }
+
+  if (keepPaging && page === MAX_NOTIFICATION_PAGES) {
+    logger.warn(
+      `⚠️ Stopped at the ${MAX_NOTIFICATION_PAGES} page limit, there may be older unread notifications left`,
+    );
+  }
+
+  if (fetchedCount === 0) {
+    logger.info('❌ No notifications found');
+    return { mentions: [], latestIndexedAt: null };
+  }
+
+  logger.info(`📥 Fetched ${fetchedCount} notifications across ${page} page(s)`);
+  logger.info(`📤 Found ${mentions.length} unread mentions`);
+
+  return { mentions, latestIndexedAt };
+};
+
+// Marks notifications as read up to (and including) the given timestamp.
+// Always pass the `indexedAt` of a notification we actually fetched — using
+// "now" would mark anything that landed mid-run as read without us ever having
+// seen it, and those mentions would never get a reply.
+export const markNotificationsAsRead = async (agent: BskyAgent, seenAt: string) => {
   await agent.app.bsky.notification.updateSeen({
     seenAt,
   });

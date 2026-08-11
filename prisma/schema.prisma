@@ -34,6 +34,10 @@ model Mention {
   // Relation to Analysis if needed
   analysisId    String?
   analysis      Analysis?     @relation(fields: [analysisId], references: [id])
+
+  // One row per mentioning post, so replaying a notification can't create a
+  // duplicate (and get the user two replies)
+  @@unique([postId])
 }
 
 model Analysis {
