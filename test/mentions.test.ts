@@ -2,44 +2,45 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BskyAgent } from '@atproto/api';
 import type { Notification } from '../src/types.js';
 
-vi.mock('../src/services/database.js', () => ({
-  storeMention: vi.fn(),
+vi.mock(import('../src/services/database.js'), () => ({
+  storeMention: vi.fn<(mention: { userHandle: string; postId: string }) => Promise<unknown>>(),
 }));
 
-vi.mock('../src/services/bluesky.js', () => ({
-  markNotificationsAsRead: vi.fn(),
-  getPost: vi.fn(),
-  getProfile: vi.fn(),
+vi.mock(import('../src/services/bluesky.js'), () => ({
+  markNotificationsAsRead: vi.fn<(agent: unknown, seenAt: string) => Promise<void>>(),
+  getPost: vi.fn<() => void>(),
+  getProfile: vi.fn<() => void>(),
 }));
 
-vi.mock('../src/services/logger.js', () => ({
-  info: vi.fn(),
-  success: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn(),
+vi.mock(import('../src/services/logger.js'), () => ({
+  info: vi.fn<() => void>(),
+  success: vi.fn<() => void>(),
+  warn: vi.fn<() => void>(),
+  error: vi.fn<() => void>(),
 }));
 
-import * as db from '../src/services/database.js';
-import * as bsky from '../src/services/bluesky.js';
-import storeMentions from '../src/mentions.js';
+const db = await import('../src/services/database.js');
+const bsky = await import('../src/services/bluesky.js');
+const { default: storeMentions } = await import('../src/mentions.js');
 
 const agent = {} as BskyAgent;
 
-const makeMention = (id: string, indexedAt: string): Notification => ({
-  uri: `at://did:plc:someone/app.bsky.feed.post/${id}`,
-  cid: 'bafycid',
-  author: {
-    did: 'did:plc:someone',
-    handle: 'someone.bsky.social',
-  },
-  reason: 'mention',
-  record: {},
-  isRead: false,
-  indexedAt,
-  labels: [],
-} as unknown as Notification);
+const makeMention = (id: string, indexedAt: string): Notification =>
+  ({
+    uri: `at://did:plc:someone/app.bsky.feed.post/${id}`,
+    cid: 'bafycid',
+    author: {
+      did: 'did:plc:someone',
+      handle: 'someone.bsky.social',
+    },
+    reason: 'mention',
+    record: {},
+    isRead: false,
+    indexedAt,
+    labels: [],
+  }) as unknown as Notification;
 
-describe('storeMentions', () => {
+describe(storeMentions, () => {
   beforeEach(() => {
     // Reset, not clear: these tests swap in their own storeMention implementations
     vi.resetAllMocks();
@@ -55,7 +56,10 @@ describe('storeMentions', () => {
 
     expect(db.storeMention).toHaveBeenCalledTimes(2);
     // Oldest first, so the read cursor only ever moves over stored mentions
-    expect(vi.mocked(db.storeMention).mock.calls.map(([data]) => data.postId)).toEqual(['1', '2']);
+    expect(vi.mocked(db.storeMention).mock.calls.map(([data]) => data.postId)).toStrictEqual([
+      '1',
+      '2',
+    ]);
     expect(bsky.markNotificationsAsRead).toHaveBeenCalledWith(agent, '2026-01-02T06:00:00.000Z');
   });
 

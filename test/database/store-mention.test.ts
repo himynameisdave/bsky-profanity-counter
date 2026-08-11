@@ -1,16 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { upsert } = vi.hoisted(() => ({ upsert: vi.fn() }));
+const { upsert } = vi.hoisted(() => ({
+  upsert: vi.fn<(args: { where: unknown; update: unknown; create: unknown }) => Promise<unknown>>(),
+}));
 
-vi.mock('@prisma/client', () => ({
-  PrismaClient: vi.fn(() => ({
+vi.mock(import('@prisma/client'), () => ({
+  PrismaClient: vi.fn<() => { mention: { upsert: typeof upsert } }>(() => ({
     mention: { upsert },
   })),
 }));
 
-import { storeMention } from '../../src/services/database.js';
+const { storeMention } = await import('../../src/services/database.js');
 
-describe('storeMention', () => {
+describe(storeMention, () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

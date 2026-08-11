@@ -100,10 +100,10 @@ export const getMentions = async (agent: BskyAgent): Promise<MentionsBatch> => {
         `🕒 Stopping after page #${page}: reached notifications older than ${NOTIFICATION_LOOKBACK_DAYS} days`,
       );
       keepPaging = false;
-    } else if (!response.data.cursor) {
-      keepPaging = false;
+    } else if (response.data.cursor) {
+      ({ cursor } = response.data);
     } else {
-      cursor = response.data.cursor;
+      keepPaging = false;
     }
   }
 
