@@ -188,6 +188,42 @@ export const getUserPosts = async (
   return allPosts;
 };
 
+// A reference to a post, as used in a reply's parent/root
+export type PostRef = { uri: string; cid: string };
+
+// A post as returned by getPost(): a reference to it, plus its record
+export type PostRecord = PostRef & { value?: unknown };
+
+// The shape we care about within a post record: where its thread starts
+type PostValue = { reply?: { root?: { uri?: unknown; cid?: unknown } } };
+
+/**
+ * Works out the parent and root refs to use when replying to a post.
+ *
+ * Per the atproto spec, every reply in a thread carries the *thread's* root,
+ * not just the post it is replying to. If the post we're replying to is itself
+ * a reply, its record already points at the real root, so we reuse that.
+ * If it's a top-level post, then it is the root.
+ *
+ * Getting this wrong forks the conversation: the AppView groups thread views by
+ * root, so a reply with the wrong root renders orphaned from the conversation
+ * the person who tagged us is actually looking at.
+ */
+export const getReplyRefs = (replyTo: PostRecord): { parent: PostRef; root: PostRef } => {
+  const parent: PostRef = { uri: replyTo.uri, cid: replyTo.cid };
+
+  // Post records are loosely typed, so narrow before reading the thread root
+  const record = replyTo.value as PostValue | undefined;
+  const root = record?.reply?.root;
+
+  if (typeof root?.uri === 'string' && typeof root.cid === 'string') {
+    return { parent, root: { uri: root.uri, cid: root.cid } };
+  }
+
+  // No root on the record: the post we're replying to is the top of the thread
+  return { parent, root: parent };
+};
+
 // Get a post by URI
 export const getPost = async (agent: BskyAgent, uri: string) => {
   try {
@@ -209,14 +245,10 @@ export const getPost = async (agent: BskyAgent, uri: string) => {
   }
 };
 
-// Reply to a post
-export const replyToPost = async (
-  agent: BskyAgent,
-  replyTo: { uri: string; cid: string },
-  text: string,
-  rootUri?: string,
-  rootCid?: string,
-) => {
+// Reply to a post.
+// `replyTo` should be the post record as returned by getPost(), so that the
+// thread root can be derived from it (see getReplyRefs).
+export const replyToPost = async (agent: BskyAgent, replyTo: PostRecord, text: string) => {
   logger.info(`🗣️ Replying to ${replyTo.uri}...`);
 
   // Create facets for mentions in the text
@@ -255,12 +287,8 @@ export const replyToPost = async (
     }
   }
 
-  // Set up the reply structure. If rootUri and rootCid are provided, use them for
-  // the root; otherwise use the parent (for direct replies to top-level posts).
-  const reply = {
-    parent: replyTo,
-    root: rootUri && rootCid ? { uri: rootUri, cid: rootCid } : replyTo,
-  };
+  // Set up the reply structure, keeping the bot's reply in the same thread
+  const reply = getReplyRefs(replyTo);
 
   // Post with facets if any were created
   return agent.post({

@@ -52,11 +52,8 @@ async function processMention(agent: BskyAgent, mention: Mention) {
 
       if (mentionPost) {
         // Reply to the mention with the analysis results
-        const reply = (await bsky.replyToPost(
-          agent,
-          { uri: mentionPost.uri, cid: mentionPost.cid },
-          responseMessage,
-        )) as { uri?: string; cid?: string } | undefined;
+        const posted = await bsky.replyToPost(agent, mentionPost, responseMessage);
+        const reply = posted as { uri?: string; cid?: string } | undefined;
 
         // Extract the reply post ID and URL
         const replyPostId = reply?.uri?.split('/').pop() || '';
@@ -124,11 +121,8 @@ async function processMention(agent: BskyAgent, mention: Mention) {
 
         if (mentionPost) {
           // Reply to the mention with the analysis results
-          const reply = (await bsky.replyToPost(
-            agent,
-            { uri: mentionPost.uri, cid: mentionPost.cid },
-            responseMessage,
-          )) as { uri?: string; cid?: string } | undefined;
+          const posted = await bsky.replyToPost(agent, mentionPost, responseMessage);
+          const reply = posted as { uri?: string; cid?: string } | undefined;
 
           // Extract the reply post ID and URL
           const replyPostId = reply?.uri?.split('/').pop() || '';
