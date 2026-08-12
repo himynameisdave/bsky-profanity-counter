@@ -37,15 +37,17 @@ async function main() {
 
     // STEP 1: Get recent mentions and store them in the database
     logger.info('🗣️ Getting unread mentions from Bluesky...');
-    const mentions = await getMentions(agent);
+    const { mentions, latestIndexedAt } = await getMentions(agent);
 
     if (mentions.length > 0) {
       logger.info(`✅ Found ${mentions.length} unread mentions to process`);
-      //  First thing we do is store the mentions in the database
-      await storeMentions(agent, mentions);
     } else {
       logger.info('🫤 No new mentions to store, going to process some analysis');
     }
+
+    //  First thing we do is store the mentions in the database, then move the
+    //  read cursor up to the batch we just fetched
+    await storeMentions(agent, mentions, latestIndexedAt);
 
     // Now we check for unanalyzed mentions and process them
     await checkAndProcessMentions(agent);

@@ -12,7 +12,11 @@ export type ProfanityDetails = {
 const prisma = new PrismaClient();
 
 /**
- * Store a new mention from a notification
+ * Store a new mention from a notification.
+ *
+ * Upserts on the unique postId so that replaying the same notification (a crash
+ * between storing and marking it read, or two overlapping runs) yields one row
+ * and one reply, and never resets a mention we've already replied to.
  */
 export async function storeMention({
   userHandle,
@@ -25,8 +29,11 @@ export async function storeMention({
   postUrl: string;
   isReply: boolean;
 }) {
-  return prisma.mention.create({
-    data: {
+  return prisma.mention.upsert({
+    where: { postId },
+    // We've already recorded this one, leave its status and reply alone
+    update: {},
+    create: {
       userHandle,
       postId,
       postUrl,
