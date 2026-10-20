@@ -26,7 +26,7 @@ You too can run your very own profanity accountant!
 
 ### Prerequisites
 
-- Node.js >= `22.14.0`
+- Node.js >= `22.18.0`
 - `pnpm`
 
 ### Installation

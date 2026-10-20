@@ -34,15 +34,15 @@
     "prisma": "^6.11.1"
   },
   "devDependencies": {
-    "@himynameisdave/oxlint-config": "~1.1.0",
+    "@himynameisdave/oxlint-config": "~2.2.0",
     "@types/node": "^22.16.0",
-    "oxfmt": "^0.63.0",
-    "oxlint": "^1.78.0",
+    "oxfmt": "^0.74.0",
+    "oxlint": "^1.89.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   },
   "engines": {
-    "node": ">=22.14.0"
+    "node": ">=22.18.0"
   }
 }
