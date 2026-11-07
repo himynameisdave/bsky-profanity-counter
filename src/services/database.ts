@@ -44,8 +44,11 @@ export async function storeMention({
 }
 
 /**
- * Get an unprocessed mention and atomically mark it as analyzing.
- * Uses a transaction to prevent race conditions.
+ * Claim the oldest unprocessed mention: mark it ANALYZING and count the
+ * attempt, in one transaction to prevent race conditions.
+ *
+ * The attempt is counted here, not when processing fails, so an attempt still
+ * counts if the run is killed partway through it (eg. by the workflow timeout).
  */
 export async function getUnprocessedMention() {
   return prisma.$transaction(async (tx) => {
@@ -70,6 +73,8 @@ export async function getUnprocessedMention() {
       },
       data: {
         status: 'ANALYZING',
+        attempts: { increment: 1 },
+        firstAttemptedAt: mention.firstAttemptedAt ?? new Date(),
       },
     });
 

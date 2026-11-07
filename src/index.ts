@@ -54,9 +54,17 @@ async function main() {
     await checkAndProcessMentions(agent);
   } catch (error) {
     logger.error(`❌ Error running the bot:\n\t- ${describeError(error)}`);
-    await db.disconnect();
   }
 }
 
-// Run the main function
-main();
+try {
+  await main();
+} finally {
+  await db.disconnect();
+  // Exit as soon as the run is done, not whenever the event loop drains. A feed
+  // request we gave up on can stay open even after it's aborted (see withTimeout
+  // in services/bluesky.ts), and it would keep this process alive, its work
+  // done, until the workflow timeout killed it.
+  // oxlint-disable-next-line unicorn/no-process-exit -- this is the entrypoint, and stray sockets must not keep it running
+  process.exit();
+}

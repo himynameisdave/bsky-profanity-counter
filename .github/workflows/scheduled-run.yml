@@ -21,10 +21,11 @@ concurrency:
 jobs:
   run-application:
     runs-on: ubuntu-latest
-    # A healthy run takes a few minutes at most. Without this, a hang runs until
+    # The last line of defence. A healthy run takes a few minutes at most, and a
+    # stalled feed request times out on its own. Without this, a hang runs until
     # GitHub's 6 hour default. Each mention is saved as it finishes, so a run cut
-    # short keeps its progress, and resetStuckMentions puts the mention it was
-    # partway through back in the queue for a later run.
+    # short keeps its progress. The mention it was partway through has already
+    # had the attempt counted, and resetStuckMentions puts it back in the queue.
     timeout-minutes: 15
 
     steps:

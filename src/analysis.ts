@@ -10,30 +10,39 @@ import type { ProfanityDetails } from './services/database.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 
-// How long after we first store a mention we keep retrying it when it fails.
-// By then a reply would be stale anyway.
+// We give up on a mention only once it has failed at least this many times...
+export const MAX_FAILED_ATTEMPTS = 5;
+// ...and its first attempt was at least this long ago. Requiring both means a
+// Bluesky outage gets the whole window however often runs happen, and a mention
+// that always fails still gets several tries however rarely they happen.
 export const MENTION_RETRY_WINDOW_MS = 24 * HOUR_MS;
 
 /**
- * Decides what happens to a mention we just failed to process.
+ * Whether a mention we've just claimed has used up its retry budget.
  *
- * Inside the retry window it stays ANALYZING, so the rest of this run moves on
- * past it and resetStuckMentions hands it back on a later run. Past the window
- * we give up and mark it FAILED. Otherwise a mention that fails every time
- * would be retried on every run, forever.
+ * Its `attempts` include this claim. Every earlier attempt either failed or was
+ * cut short by a killed run, otherwise the mention would be DONE. The window
+ * runs from the first attempt, so time spent waiting in the queue behind other
+ * mentions doesn't count against it.
  */
-async function handleFailedMention(mention: Mention) {
-  const age = Date.now() - mention.createdAt.getTime();
+function hasExhaustedRetries(mention: Mention): boolean {
+  const failedAttempts = mention.attempts - 1;
 
-  if (age < MENTION_RETRY_WINDOW_MS) {
-    logger.info(`🔁 Leaving mention ${mention.id} to be retried on a later run`);
-    return;
+  if (failedAttempts < MAX_FAILED_ATTEMPTS || !mention.firstAttemptedAt) {
+    return false;
   }
 
+  return Date.now() - mention.firstAttemptedAt.getTime() >= MENTION_RETRY_WINDOW_MS;
+}
+
+/**
+ * Marks a mention FAILED so it's never retried.
+ */
+async function giveUpOnMention(mention: Mention) {
   try {
     await db.markMentionAsFailed(mention.id);
     logger.warn(
-      `🪦 Giving up on mention ${mention.id} for ${mention.userHandle}: still failing ${Math.floor(age / HOUR_MS)}h after we first saw it`,
+      `🪦 Giving up on mention ${mention.id} for ${mention.userHandle}: ${mention.attempts - 1} attempts have failed since ${mention.firstAttemptedAt?.toISOString()}`,
     );
   } catch (error) {
     // Not being able to record the failure mustn't stop the rest of the queue
@@ -203,10 +212,12 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       }
     }
   } catch (error) {
+    // Leave it ANALYZING. The rest of this run moves on past it, and
+    // resetStuckMentions puts it back in the queue for a later run, which
+    // decides whether it still has retries left (see hasExhaustedRetries)
     logger.error(
-      `❌ Error processing mention ${mention.id} for ${mention.userHandle}: ${describeError(error)}`,
+      `❌ Attempt ${mention.attempts} at mention ${mention.id} for ${mention.userHandle} failed, leaving it for a later run: ${describeError(error)}`,
     );
-    await handleFailedMention(mention);
   }
 }
 
@@ -227,9 +238,13 @@ export async function processUnanalyzedMentions(agent: BskyAgent): Promise<void>
   logger.info(`📈 Found ${unprocessedMentionsCount} unprocessed mentions to analyze`);
 
   // Process the first mention
-  // getUnprocessedMention now also marks it as ANALYZING atomically
+  // getUnprocessedMention also marks it as ANALYZING and counts the attempt, atomically
   const mention = await db.getUnprocessedMention();
-  if (mention) {
+  if (mention && hasExhaustedRetries(mention)) {
+    // Checked when it's claimed rather than when it fails, so attempts that
+    // were cut short by a killed run, and never reached a catch, count too
+    await giveUpOnMention(mention);
+  } else if (mention) {
     await processMention(agent, mention);
   } else {
     logger.warn(

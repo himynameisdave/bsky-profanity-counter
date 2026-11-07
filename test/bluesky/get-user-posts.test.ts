@@ -13,13 +13,16 @@ vi.mock(import('../../src/services/logger.js'), () => ({
 process.env.BLUESKY_IDENTIFIER ||= 'test.bot';
 process.env.BLUESKY_PASSWORD ||= 'test-password';
 
-const { getUserPosts, MAX_FEED_PAGE_ATTEMPTS, FEED_RETRY_BASE_DELAY_MS } =
+const { getUserPosts, MAX_FEED_PAGE_ATTEMPTS, FEED_RETRY_BASE_DELAY_MS, FEED_PAGE_TIMEOUT_MS } =
   await import('../../src/services/bluesky.js');
 
 const DID = 'did:plc:someone';
 
 type FeedResponse = { data: { feed: unknown[]; cursor?: string } };
-type FeedHandler = (cursor: string | undefined) => Promise<FeedResponse>;
+type FeedHandler = (
+  cursor: string | undefined,
+  signal: AbortSignal | undefined,
+) => Promise<FeedResponse>;
 
 // What @atproto/api throws when one post in a page breaks the lexicon: a
 // generic message, with the field that was actually wrong in the cause
@@ -50,18 +53,26 @@ const RUNAWAY_CALL_LIMIT = 50;
 
 const makeAgent = (handler: FeedHandler) => {
   let calls = 0;
-  const getAuthorFeed = vi.fn<(params: { cursor?: string }) => Promise<FeedResponse>>(
-    async ({ cursor }) => {
-      calls++;
-      if (calls > RUNAWAY_CALL_LIMIT) {
-        return { data: { feed: [] } };
-      }
-      return handler(cursor);
-    },
-  );
+  const getAuthorFeed = vi.fn<
+    (params: { cursor?: string }, opts?: { signal?: AbortSignal }) => Promise<FeedResponse>
+  >(async ({ cursor }, opts) => {
+    calls++;
+    if (calls > RUNAWAY_CALL_LIMIT) {
+      return { data: { feed: [] } };
+    }
+    return handler(cursor, opts?.signal);
+  });
 
   return { agent: { getAuthorFeed } as unknown as BskyAgent, getAuthorFeed };
 };
+
+// A request that stalls: it never answers, and only ends if its signal aborts
+const stalledRequest = (signal?: AbortSignal) =>
+  new Promise<FeedResponse>((_resolve, reject) => {
+    signal?.addEventListener('abort', () => {
+      reject(signal.reason);
+    });
+  });
 
 // Captures how a promise ends, so a rejection is never left unhandled while the
 // test is still moving the fake clock along
@@ -185,5 +196,51 @@ describe(getUserPosts, () => {
 
     const { error } = await outcome;
     expect(error).toBeInstanceOf(Error);
+  });
+
+  it('aborts an attempt that never answers, and gives up once every attempt has timed out', async () => {
+    const signals: AbortSignal[] = [];
+    const { agent, getAuthorFeed } = makeAgent(async (_cursor, signal) => {
+      if (signal) {
+        signals.push(signal);
+      }
+      return stalledRequest(signal);
+    });
+
+    const { error } = await settle(getUserPosts(agent, DID));
+
+    expect((error as Error).message).toMatch(/Gave up fetching posts chunk #1/u);
+    expect(describeError(error)).toContain(`Timed out after ${FEED_PAGE_TIMEOUT_MS}ms`);
+    expect(getAuthorFeed).toHaveBeenCalledTimes(MAX_FEED_PAGE_ATTEMPTS);
+    // Each stalled request was torn down, not just left behind
+    expect(signals).toHaveLength(MAX_FEED_PAGE_ATTEMPTS);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it('aborts an attempt only once its deadline has passed', async () => {
+    let signal: AbortSignal | undefined;
+    const { agent } = makeAgent(async (_cursor, attemptSignal) => {
+      signal ??= attemptSignal;
+      return stalledRequest(attemptSignal);
+    });
+
+    const outcome = capture(getUserPosts(agent, DID));
+
+    await vi.advanceTimersByTimeAsync(FEED_PAGE_TIMEOUT_MS - 1);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal?.aborted).toBe(true);
+
+    await vi.runAllTimersAsync();
+    await outcome;
+  });
+
+  it('still gives up on a stalled request that ignores its abort signal', async () => {
+    const { agent, getAuthorFeed } = makeAgent(async () => stalledRequest());
+
+    const { error } = await settle(getUserPosts(agent, DID));
+
+    expect((error as Error).message).toMatch(/Gave up fetching posts chunk #1/u);
+    expect(getAuthorFeed).toHaveBeenCalledTimes(MAX_FEED_PAGE_ATTEMPTS);
   });
 });

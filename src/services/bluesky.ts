@@ -148,11 +148,44 @@ const FEED_PAGE_SIZE = 100;
 export const MAX_FEED_PAGE_ATTEMPTS = 3;
 // Wait before the first retry, doubled for each retry after that
 export const FEED_RETRY_BASE_DELAY_MS = 1000;
+// How long one attempt at a page may take before we abort it. Pages normally
+// come back in well under a second. Even when every attempt times out, giving
+// up on a page takes 3 × 15s plus 3s of backoff, about 48s, well inside the
+// workflow's 15 minute timeout, so the failure is handled before the job is killed.
+export const FEED_PAGE_TIMEOUT_MS = 15_000;
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+
+/**
+ * Runs a request with a deadline. When the deadline passes, the request's
+ * signal is aborted, which normally tears it down, and the returned promise
+ * rejects either way. Don't rely on the abort alone: in testing on Node 22,
+ * fetch sometimes ignored it for a request that had been pending a while.
+ */
+const withTimeout = async <T>(
+  ms: number,
+  request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> => {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`Timed out after ${ms}ms`);
+      controller.abort(error);
+      reject(error);
+    }, ms);
+  });
+
+  try {
+    return await Promise.race([request(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 /**
  * Fetches one page of an author feed, retrying with backoff if it fails.
@@ -161,6 +194,8 @@ const sleep = (ms: number) =>
  * some failures happen on every attempt, and an endless retry loop hangs the
  * whole run. For example, @atproto/api rejects a whole page when any post in it
  * fails lexicon validation, and Bluesky returns that same post every time.
+ * Each attempt has a deadline too, so a request that stalls counts as a failed
+ * attempt instead of hanging forever.
  */
 const getAuthorFeedPage = async (
   agent: BskyAgent,
@@ -174,7 +209,9 @@ const getAuthorFeedPage = async (
     try {
       // Retries are deliberately sequential, each one waits out the last
       // oxlint-disable-next-line no-await-in-loop
-      return await agent.getAuthorFeed({ actor: did, limit: FEED_PAGE_SIZE, cursor });
+      return await withTimeout(FEED_PAGE_TIMEOUT_MS, (signal) =>
+        agent.getAuthorFeed({ actor: did, limit: FEED_PAGE_SIZE, cursor }, { signal }),
+      );
     } catch (error) {
       lastError = error;
       logger.warn(
