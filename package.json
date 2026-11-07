@@ -34,10 +34,10 @@
     "prisma": "^6.11.1"
   },
   "devDependencies": {
-    "@himynameisdave/oxlint-config": "~2.2.0",
+    "@himynameisdave/oxlint-config": "~2.3.0",
     "@types/node": "^22.16.0",
-    "oxfmt": "^0.74.0",
-    "oxlint": "^1.89.0",
+    "oxfmt": "^0.77.0",
+    "oxlint": "^1.92.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
