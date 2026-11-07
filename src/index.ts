@@ -4,6 +4,7 @@ import * as logger from './services/logger.js';
 import * as db from './services/database.js';
 import storeMentions from './mentions.js';
 import { checkAndProcessMentions } from './analysis.js';
+import { describeError } from './errors.js';
 
 // Load environment variables
 dotenv.config();
@@ -52,7 +53,7 @@ async function main() {
     // Now we check for unanalyzed mentions and process them
     await checkAndProcessMentions(agent);
   } catch (error) {
-    logger.error(`❌ Error running the bot:\n\t- ${error}`);
+    logger.error(`❌ Error running the bot:\n\t- ${describeError(error)}`);
     await db.disconnect();
   }
 }

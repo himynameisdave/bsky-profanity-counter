@@ -11,9 +11,21 @@ on:
     branches:
       - main
 
+# One run at a time. Overlapping runs fight over the same mentions, and a run
+# that hangs shouldn't have more piling up behind it. A new run waits for the
+# current one rather than cancelling it partway through replying.
+concurrency:
+  group: scheduled-run
+  cancel-in-progress: false
+
 jobs:
   run-application:
     runs-on: ubuntu-latest
+    # A healthy run takes a few minutes at most. Without this, a hang runs until
+    # GitHub's 6 hour default. Each mention is saved as it finishes, so a run cut
+    # short keeps its progress, and resetStuckMentions puts the mention it was
+    # partway through back in the queue for a later run.
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository

@@ -5,7 +5,41 @@ import * as bsky from './services/bluesky.js';
 import * as profanity from './services/profanity.js';
 import * as logger from './services/logger.js';
 import { handleSelfTargeting } from './services/self-targeting.js';
+import { describeError } from './errors.js';
 import type { ProfanityDetails } from './services/database.js';
+
+const HOUR_MS = 60 * 60 * 1000;
+
+// How long after we first store a mention we keep retrying it when it fails.
+// By then a reply would be stale anyway.
+export const MENTION_RETRY_WINDOW_MS = 24 * HOUR_MS;
+
+/**
+ * Decides what happens to a mention we just failed to process.
+ *
+ * Inside the retry window it stays ANALYZING, so the rest of this run moves on
+ * past it and resetStuckMentions hands it back on a later run. Past the window
+ * we give up and mark it FAILED. Otherwise a mention that fails every time
+ * would be retried on every run, forever.
+ */
+async function handleFailedMention(mention: Mention) {
+  const age = Date.now() - mention.createdAt.getTime();
+
+  if (age < MENTION_RETRY_WINDOW_MS) {
+    logger.info(`🔁 Leaving mention ${mention.id} to be retried on a later run`);
+    return;
+  }
+
+  try {
+    await db.markMentionAsFailed(mention.id);
+    logger.warn(
+      `🪦 Giving up on mention ${mention.id} for ${mention.userHandle}: still failing ${Math.floor(age / HOUR_MS)}h after we first saw it`,
+    );
+  } catch (error) {
+    // Not being able to record the failure mustn't stop the rest of the queue
+    logger.error(`❌ Could not mark mention ${mention.id} as failed: ${describeError(error)}`);
+  }
+}
 
 /**
  * Process a single mention by analyzing the user's post history
@@ -169,9 +203,10 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       }
     }
   } catch (error) {
-    logger.error(`❌ Error processing mention: ${error}`);
-    // Leave the mention in ANALYZING state for retry later
-    // TODO mark it as UNPROCESSED.
+    logger.error(
+      `❌ Error processing mention ${mention.id} for ${mention.userHandle}: ${describeError(error)}`,
+    );
+    await handleFailedMention(mention);
   }
 }
 
@@ -216,6 +251,6 @@ export async function checkAndProcessMentions(agent: BskyAgent): Promise<void> {
     await processUnanalyzedMentions(agent);
     logger.success('✅ Completed processing of unanalyzed mentions');
   } catch (error) {
-    logger.error(`❌ Error checking and processing mentions: ${error}`);
+    logger.error(`❌ Error checking and processing mentions: ${describeError(error)}`);
   }
 }

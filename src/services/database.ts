@@ -126,6 +126,17 @@ export async function markMentionAsDone({
 }
 
 /**
+ * Mark a mention as failed: we gave up on it, and it will never be retried.
+ * Unlike ANALYZING, resetStuckMentions leaves FAILED mentions alone.
+ */
+export async function markMentionAsFailed(mentionId: string) {
+  return prisma.mention.update({
+    where: { id: mentionId },
+    data: { status: 'FAILED' },
+  });
+}
+
+/**
  * Find a fresh analysis (within 24 hours) for a user
  */
 export async function findFreshAnalysis(userHandle: string) {

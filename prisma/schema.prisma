@@ -17,6 +17,8 @@ enum MentionStatus {
   UNPROCESSED
   ANALYZING
   DONE
+  // We kept failing to process it and gave up, so it's never retried
+  FAILED
 }
 
 model Mention {
