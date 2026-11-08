@@ -3,9 +3,12 @@ import {
   analyzePosts,
   analyzeProfanity,
   generateResponseMessage,
+  renderWord,
   type ProfanityAnalysis,
 } from '../src/services/profanity.js';
 import type { AppBskyFeedDefs } from '@atproto/api';
+import BAD_WORDS from '../src/data/badWords.js';
+import UNQUOTABLE_WORDS from '../src/data/unquotableWords.js';
 
 // Mock data
 const createMockPost = (text: string): AppBskyFeedDefs.PostView =>
@@ -182,6 +185,21 @@ describe('Profanity Service', () => {
       expect(message).not.toContain('🥉');
     });
 
+    // See #9
+    it.each([...UNQUOTABLE_WORDS])("doesn't repeat %s verbatim", (word) => {
+      const analysis: ProfanityAnalysis = {
+        totalCount: 3,
+        wordCounts: { [word]: 3 },
+        topThree: [{ word, count: 3, rank: 1 }],
+        postCount: 20,
+      };
+
+      const message = generateResponseMessage(analysis, 'testuser', 20);
+
+      expect(message).not.toContain(word);
+      expect(message).toContain(`🥇 "${renderWord(word)}" (3 times)`);
+    });
+
     it("doesn't call someone a good citizen when there were no posts to check", () => {
       const analysis: ProfanityAnalysis = {
         totalCount: 0,
@@ -195,6 +213,29 @@ describe('Profanity Service', () => {
       expect(message).toBe(
         'No original posts found for @quiet.bsky.social in the last year to analyze.',
       );
+    });
+  });
+
+  describe(renderWord, () => {
+    it("masks all but the first and last letter of a word we won't repeat", () => {
+      expect(renderWord('retard')).toBe('r****d');
+      expect(renderWord('tard')).toBe('t**d');
+      expect(renderWord('jap')).toBe('j*p');
+    });
+
+    it('masks each word of a phrase', () => {
+      expect(renderWord('white power')).toBe('w***e p***r');
+    });
+
+    it('leaves ordinary profanity alone', () => {
+      expect(renderWord('fuck')).toBe('fuck');
+      expect(renderWord('piece of shit')).toBe('piece of shit');
+    });
+
+    it('only masks words that are actually on the list', () => {
+      for (const word of UNQUOTABLE_WORDS) {
+        expect(BAD_WORDS.has(word)).toBe(true);
+      }
     });
   });
 });
