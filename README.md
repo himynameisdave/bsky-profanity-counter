@@ -45,7 +45,7 @@ You too can run your very own profanity accountant!
 - A Postgres database. For local development, this one matches the URL in `.env.example`:
 
   ```
-  docker run -d --name profanity-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres
+  docker run -d --name profanity-db -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:5432:5432 postgres
   ```
 
 ### Installation
@@ -111,7 +111,7 @@ The bot runs on GitHub Actions. To deploy your own:
 
 ## Contributing
 
-PRs and issues are welcome! Before opening a PR, make sure these all pass (CI runs the same four):
+PRs and issues are welcome! Before opening a PR, make sure these all pass (CI runs the same four, then `pnpm build`):
 
 ```
 pnpm format:check

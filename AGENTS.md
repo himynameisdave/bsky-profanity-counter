@@ -14,12 +14,12 @@ pnpm typecheck      # tsc --noEmit, over src/ and test/
 pnpm test           # vitest run
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly these on every PR, and a `pre-commit` hook
-(`.githooks/pre-commit`, wired up by the `prepare` script) runs the format and lint checks
+CI (`.github/workflows/ci.yml`) runs these on every PR, then `pnpm build`, and a `pre-commit`
+hook (`.githooks/pre-commit`, wired up by the `prepare` script) runs the format and lint checks
 before any commit lands. Do not bypass the hook with `--no-verify`.
 
 `tsconfig.json` covers `src/` and `test/` and never emits. `pnpm build` compiles just `src/`
-to `dist/` with `tsconfig.build.json`.
+to `dist/` with `tsconfig.build.json`. If you touch either tsconfig, run `pnpm build` too.
 
 ## Linting and formatting
 
