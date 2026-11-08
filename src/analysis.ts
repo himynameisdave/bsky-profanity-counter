@@ -47,7 +47,7 @@ function getRecountBase(existing: Analysis | null, did: string) {
   if (
     !existing ||
     !details?.days ||
-    !details.newestIndexedAt ||
+    !details.checkpoint ||
     !details.fullCountAt ||
     // The handle belongs to a different account now
     details.did !== did ||
@@ -133,7 +133,7 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       );
 
       // Just their new posts if we can add them to the last analysis, otherwise their whole year
-      const posts = await bsky.getUserPosts(agent, profile.did, previous?.newestIndexedAt);
+      const posts = await bsky.getUserPosts(agent, profile.did, previous?.checkpoint);
 
       // Saved and answered even with no posts, so a quiet account still gets a
       // reply, and a repeat request is served from the cache
@@ -149,8 +149,7 @@ async function processMention(agent: BskyAgent, mention: Mention) {
           topProfanities: analysis.topThree.map((p) => ({ word: p.word, count: p.count })),
           did: profile.did,
           days: analysis.days,
-          // The feed is newest first
-          newestIndexedAt: posts[0]?.indexedAt ?? previous?.newestIndexedAt,
+          checkpoint: bsky.getFeedCheckpoint(posts, previous?.checkpoint),
           fullCountAt: previous?.fullCountAt ?? new Date().toISOString(),
         },
       });

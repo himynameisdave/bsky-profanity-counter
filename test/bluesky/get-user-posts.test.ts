@@ -293,20 +293,29 @@ describe(getUserPosts, () => {
     await outcome;
   });
 
-  it('only gets the posts since the given one, stopping at the first page that has it', async () => {
-    const { agent, getAuthorFeed } = makeAgent(async () => ({
-      data: {
-        feed: [postFrom('new', 1), postFrom('newer-than-last', 5), postFrom('seen', 10)],
-        cursor: 'more',
+  it('only gets the posts after the checkpoint, stopping at the first one sorted before it', async () => {
+    const pages: Record<string, FeedResponse> = {
+      start: {
+        data: {
+          feed: [postFrom('new', 1), postFrom('tied-new', 10), postFrom('tied-seen', 10)],
+          cursor: 'next',
+        },
       },
-    }));
+      next: { data: { feed: [postFrom('older', 15)], cursor: 'more' } },
+    };
+    const { agent, getAuthorFeed } = makeAgent(async (cursor = 'start') => pages[cursor]);
+    const checkpoint = {
+      sortTime: Date.parse(minutesAgo(10)),
+      uris: [`at://${DID}/app.bsky.feed.post/tied-seen`],
+    };
 
-    const { value: posts } = await settle(getUserPosts(agent, DID, minutesAgo(10)));
+    const { value: posts } = await settle(getUserPosts(agent, DID, checkpoint));
 
     expect(posts?.map((p) => p.uri)).toStrictEqual([
       `at://${DID}/app.bsky.feed.post/new`,
-      `at://${DID}/app.bsky.feed.post/newer-than-last`,
+      `at://${DID}/app.bsky.feed.post/tied-new`,
     ]);
-    expect(getAuthorFeed).toHaveBeenCalledOnce();
+    // The first page was all at or after the checkpoint, so there could be more on the next
+    expect(getAuthorFeed).toHaveBeenCalledTimes(2);
   });
 });

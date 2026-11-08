@@ -17,6 +17,7 @@ const db = vi.hoisted(() => ({
 const bsky = vi.hoisted(() => ({
   getProfile: vi.fn<typeof Bsky.getProfile>(),
   getUserPosts: vi.fn<typeof Bsky.getUserPosts>(),
+  getFeedCheckpoint: vi.fn<typeof Bsky.getFeedCheckpoint>(),
   getPost: vi.fn<typeof Bsky.getPost>(),
   replyToPost: vi.fn<typeof Bsky.replyToPost>(),
   findOwnReply: vi.fn<typeof Bsky.findOwnReply>(),

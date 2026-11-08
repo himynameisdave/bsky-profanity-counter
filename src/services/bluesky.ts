@@ -8,6 +8,7 @@ import {
 import * as logger from './logger.js';
 import { describeError } from '../errors.js';
 import { BLUESKY_SERVICE, MAX_POSTS } from '../config.js';
+import { getYearCutoff } from './profanity.js';
 import type { BlueskyCredentials } from '../config.js';
 import type { Notification } from '../types.js';
 
@@ -249,6 +250,43 @@ const getPostDate = (post: AppBskyFeedDefs.PostView | undefined): Date | null =>
   return typeof record?.createdAt === 'string' ? new Date(record.createdAt) : null;
 };
 
+/**
+ * Where a post sits in an author feed, in ms since the epoch. Bluesky sorts the
+ * feed by whichever is earlier of when the post says it was written and when it
+ * was indexed (`sortAt` in the appview), not by either one on its own.
+ */
+export const getSortTime = (post: AppBskyFeedDefs.PostView): number => {
+  const indexedAt = Date.parse(post.indexedAt);
+  const createdAt = getPostDate(post)?.getTime() ?? Number.NaN;
+  return Number.isNaN(createdAt) ? indexedAt : Math.min(createdAt, indexedAt);
+};
+
+// Where a count of someone's feed left off: the sort time of the newest post we
+// counted, and every post we counted at exactly that time, since several can share it
+export type FeedCheckpoint = { sortTime: number; uris: string[] };
+
+/**
+ * The checkpoint to save after counting `posts` (newly fetched with `previous`,
+ * if there was one). With no new posts, nothing moved, so it's `previous`.
+ */
+export const getFeedCheckpoint = (
+  posts: AppBskyFeedDefs.PostView[],
+  previous?: FeedCheckpoint,
+): FeedCheckpoint | undefined => {
+  if (posts.length === 0) {
+    return previous;
+  }
+
+  const sortTime = posts.reduce((newest, post) => Math.max(newest, getSortTime(post)), -Infinity);
+  const uris = posts.filter((post) => getSortTime(post) === sortTime).map((post) => post.uri);
+
+  // New posts tied with the old checkpoint join the posts already counted at that time
+  return {
+    sortTime,
+    uris: sortTime === previous?.sortTime ? [...previous.uris, ...uris] : uris,
+  };
+};
+
 // Posts per page of an author feed (the API's limit)
 const FEED_PAGE_SIZE = 100;
 // How many times we'll ask for a single page of a feed before giving up on it
@@ -326,27 +364,25 @@ const getAuthorFeedPage = async (
 };
 
 /**
- * Gets a user's posts from the last year, newest first, up to MAX_POSTS.
- * Throws if a page of their feed can't be fetched (see getAuthorFeedPage).
+ * Gets a user's posts from the last year (see getYearCutoff), in feed order, up
+ * to MAX_POSTS. Throws if a page of their feed can't be fetched (see getAuthorFeedPage).
  *
- * Pass `since` (the `indexedAt` of the newest post we've already counted) to
- * only get the posts after it. The feed is newest first, so we stop paging at
- * the first post we've seen, which is usually on the first page.
+ * Pass `since` (where the last count left off, see getFeedCheckpoint) to only
+ * get the posts after it. The feed is sorted newest first, so we stop paging at
+ * the first post sorted before the checkpoint, which is usually on the first page.
  */
 export const getUserPosts = async (
   agent: BskyAgent,
   did: string,
-  since?: string,
+  since?: FeedCheckpoint,
 ): Promise<AppBskyFeedDefs.PostView[]> => {
   const allPosts: AppBskyFeedDefs.PostView[] = [];
   let cursor: string | undefined;
-  const ONE_YEAR_AGO = new Date();
-  ONE_YEAR_AGO.setFullYear(ONE_YEAR_AGO.getFullYear() - 1);
-  const sinceTime = since === undefined ? undefined : Date.parse(since);
+  const ONE_YEAR_AGO = getYearCutoff();
 
   logger.info(
     since
-      ? `🔍 Getting posts for ${did} since ${since}...`
+      ? `🔍 Getting posts for ${did} since ${new Date(since.sortTime).toISOString()}...`
       : `🔍 Getting posts for ${did} (up to ${MAX_POSTS} posts from the last year)...`,
   );
 
@@ -383,16 +419,20 @@ export const getUserPosts = async (
       break;
     }
 
-    if (sinceTime !== undefined) {
-      const unseen = posts.filter((post) => Date.parse(post.indexedAt) > sinceTime);
-      if (unseen.length < posts.length) {
-        reachedSeen = true;
-        posts = unseen;
-      }
-    }
-
     // Check the date of the last post in this chunk
     const lastPostDate = getPostDate(posts[posts.length - 1]);
+
+    if (since) {
+      // Sorted before the checkpoint means everything after it on the feed is too
+      reachedSeen = getSortTime(posts[posts.length - 1]) < since.sortTime;
+      posts = posts.filter((post) => {
+        const sortTime = getSortTime(post);
+        return (
+          sortTime > since.sortTime ||
+          (sortTime === since.sortTime && !since.uris.includes(post.uri))
+        );
+      });
+    }
 
     if (lastPostDate) {
       oldestPostDate = lastPostDate;

@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import type { DailyCounts } from './profanity.js';
+import type { FeedCheckpoint } from './bluesky.js';
 
 // Type for profanity details stored in JSON
 export type ProfanityDetails = {
@@ -14,8 +15,8 @@ export type ProfanityDetails = {
   did?: string;
   // The counts the totals above add up from
   days?: DailyCounts;
-  // The `indexedAt` of the newest post we counted
-  newestIndexedAt?: string;
+  // Where we left off in their feed
+  checkpoint?: FeedCheckpoint;
   // When we last counted their whole year, rather than just their new posts
   fullCountAt?: string;
 };

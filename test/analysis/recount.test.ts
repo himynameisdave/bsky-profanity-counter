@@ -72,6 +72,10 @@ const runMention = async (agent: BskyAgent, id: string) => {
 // Their feed, newest first, served a page at a time like the real one
 let feed: { post: unknown }[] = [];
 
+const makePost = (id: string, text: string, createdAt: string, indexedAt = createdAt) => ({
+  post: { uri: `at://p/${id}`, indexedAt, record: { text, createdAt } },
+});
+
 const makePosts = (prefix: string, count: number, text: string) =>
   Array.from({ length: count }, (_, n) => {
     // A minute apart, the first one newest
@@ -164,5 +168,46 @@ describe('processUnanalyzedMentions for someone we analyzed before', () => {
 
     expect(getAuthorFeed).toHaveBeenCalledTimes(3);
     expect(lastSaved()).toMatchObject({ totalPosts: 249, profanityCount: 49 });
+  });
+
+  it("doesn't count a post twice when the feed's order isn't the order posts were indexed in", async () => {
+    // The feed sorts by the earlier of `createdAt` and `indexedAt`, so a post
+    // written at 11:58 but indexed at 12:01 comes after one indexed at 12:00
+    feed = [
+      makePost('a', 'shit', '2026-07-15T12:00:00.000Z'),
+      // Tied with `a` on sort time
+      makePost('b', 'shit', '2026-07-15T12:00:00.000Z', '2026-07-15T12:00:00.500Z'),
+      makePost('c', 'shit', '2026-07-15T11:58:00.000Z', '2026-07-15T12:01:00.000Z'),
+    ];
+
+    await runMention(agent, 'first');
+    expect(lastSaved()).toMatchObject({ totalPosts: 3, profanityCount: 3 });
+
+    vi.advanceTimersByTime(ANALYSIS_CACHE_TTL_MS + 1);
+    await runMention(agent, 'second');
+
+    expect(lastSaved()).toMatchObject({ totalPosts: 3, profanityCount: 3 });
+  });
+
+  it('keeps the same posts from the day a year ago as a recount from scratch', async () => {
+    vi.setSystemTime(new Date('2026-07-14T12:00:00Z'));
+    feed = [
+      ...makePosts('recent', 1, 'shit'),
+      makePost('anniversary', 'damn', '2025-07-15T10:00:00.000Z'),
+    ];
+
+    await runMention(agent, 'first');
+
+    // Past the cache, and past 10:00 on the anniversary
+    vi.setSystemTime(new Date('2026-07-15T13:00:00Z'));
+    await runMention(agent, 'built-up');
+    const builtUp = lastSaved();
+
+    stored = null;
+    await runMention(agent, 'from-scratch');
+    const fromScratch = lastSaved();
+
+    expect(builtUp).toMatchObject({ totalPosts: 2, profanityCount: 2 });
+    expect(fromScratch).toMatchObject({ totalPosts: 2, profanityCount: 2 });
   });
 });

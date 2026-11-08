@@ -75,6 +75,18 @@ export const analyzeProfanity = (text: string): Record<string, number> => {
   return wordCounts;
 };
 
+/**
+ * Where "the last year" starts: UTC midnight on this day a year ago. Counts are
+ * kept by day, so fetching posts and adding up the days both cut off here, and
+ * a recount from scratch matches one built up a day at a time.
+ */
+export const getYearCutoff = (): Date => {
+  const cutoff = new Date();
+  cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 1);
+  cutoff.setUTCHours(0, 0, 0, 0);
+  return cutoff;
+};
+
 // What we counted on one day (UTC)
 export type DayCounts = { posts: number; wordCounts: Record<string, number> };
 
@@ -108,9 +120,7 @@ export const analyzePosts = (
   posts: AppBskyFeedDefs.PostView[],
   earlier: DailyCounts = {},
 ): ProfanityAnalysis & { days: DailyCounts } => {
-  const oneYearAgo = new Date();
-  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-  const cutoff = oneYearAgo.toISOString().slice(0, 10);
+  const cutoff = getYearCutoff().toISOString().slice(0, 10);
 
   // Copied, so the counts we were given aren't changed
   const days: DailyCounts = {};
