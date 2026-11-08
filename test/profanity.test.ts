@@ -185,8 +185,33 @@ describe('Profanity Service', () => {
       expect(message).not.toContain('🥉');
     });
 
-    // See #9
-    it.each([...UNQUOTABLE_WORDS])("doesn't repeat %s verbatim", (word) => {
+    // See #9. This list is on purpose separate from `UNQUOTABLE_WORDS`: a word
+    // dropped from the set would otherwise drop its own test case too
+    it.each([
+      'ass-pirate',
+      'asspirate',
+      'assbandit',
+      'butt-pirate',
+      'beaner',
+      'chink',
+      'coon',
+      'dyke',
+      'faggot',
+      'fudge packer',
+      'gook',
+      'kike',
+      'nigger',
+      'paki',
+      'pedophile',
+      'puto',
+      'rape',
+      'retard',
+      'spic',
+      'tranny',
+      'wetback',
+    ])("doesn't repeat %s verbatim", (word) => {
+      expect(UNQUOTABLE_WORDS.has(word)).toBe(true);
+
       const analysis: ProfanityAnalysis = {
         totalCount: 3,
         wordCounts: { [word]: 3 },
@@ -198,6 +223,19 @@ describe('Profanity Service', () => {
 
       expect(message).not.toContain(word);
       expect(message).toContain(`🥇 "${renderWord(word)}" (3 times)`);
+    });
+
+    it("doesn't repeat any word on the list verbatim", () => {
+      for (const word of UNQUOTABLE_WORDS) {
+        const analysis: ProfanityAnalysis = {
+          totalCount: 3,
+          wordCounts: { [word]: 3 },
+          topThree: [{ word, count: 3, rank: 1 }],
+          postCount: 20,
+        };
+
+        expect(generateResponseMessage(analysis, 'testuser', 20)).not.toContain(word);
+      }
     });
 
     it("doesn't call someone a good citizen when there were no posts to check", () => {
