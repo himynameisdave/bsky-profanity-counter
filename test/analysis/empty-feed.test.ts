@@ -45,7 +45,7 @@ vi.mock(import('../../src/services/bluesky.js'), async (importOriginal) => ({
 const { processUnanalyzedMentions } = await import('../../src/analysis.js');
 
 const HANDLE = 'quiet.bsky.social';
-const EMPTY_WINDOW_MESSAGE = `No original posts found for @${HANDLE} in the last year to analyse.`;
+const EMPTY_WINDOW_MESSAGE = `No original posts found for @${HANDLE} in the last year to analyze.`;
 
 const twoYearsAgo = () => {
   const date = new Date();

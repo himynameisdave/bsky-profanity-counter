@@ -131,7 +131,7 @@ export const generateResponseMessage = (
 ): string => {
   // Zero posts isn't proof they never swear, so don't call them a good citizen
   if (postCount === 0) {
-    return `No original posts found for @${username} in the last year to analyse.`;
+    return `No original posts found for @${username} in the last year to analyze.`;
   }
 
   if (analysis.totalCount === 0) {

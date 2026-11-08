@@ -193,7 +193,7 @@ describe('Profanity Service', () => {
       const message = generateResponseMessage(analysis, 'quiet.bsky.social', 0);
 
       expect(message).toBe(
-        'No original posts found for @quiet.bsky.social in the last year to analyse.',
+        'No original posts found for @quiet.bsky.social in the last year to analyze.',
       );
     });
   });
