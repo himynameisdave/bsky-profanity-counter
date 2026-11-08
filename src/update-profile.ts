@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import * as bsky from './services/bluesky.js';
 import * as profileUpdater from './services/profile-updater.js';
 import * as logger from './services/logger.js';
+import { describeError } from './errors.js';
 
 // Load environment variables
 dotenv.config();
@@ -19,11 +20,14 @@ async function main() {
     const agent = await bsky.createAgent();
 
     // Update the profile description
-    await profileUpdater.updateProfileDescription(agent);
+    // It's one database query and a read and write of our profile, so this is generous
+    await bsky.withTimeout(bsky.REQUEST_TIMEOUT_MS * 2, () =>
+      profileUpdater.updateProfileDescription(agent),
+    );
 
     logger.success('✅ Profile update completed successfully');
   } catch (error) {
-    logger.error(`❌ Profile update failed: ${error}`);
+    logger.error(`❌ Profile update failed: ${describeError(error)}`);
     process.exit(1);
   } finally {
     // Clean up database connection
@@ -35,6 +39,6 @@ async function main() {
 try {
   await main();
 } catch (error) {
-  logger.error(`❌ Unexpected error: ${error}`);
+  logger.error(`❌ Unexpected error: ${describeError(error)}`);
   process.exit(1);
 }

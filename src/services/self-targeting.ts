@@ -1,7 +1,6 @@
 import type { BskyAgent } from '@atproto/api';
 import type { Mention } from '@prisma/client';
-import * as bsky from './bluesky.js';
-import * as db from './database.js';
+import { replyToMention } from './reply.js';
 import * as logger from './logger.js';
 
 /**
@@ -32,40 +31,6 @@ function getRandomResponse() {
 export async function handleSelfTargeting(agent: BskyAgent, mention: Mention): Promise<void> {
   logger.info(`🤖 Bot was targeted by itself, responding with whimsical message`);
 
-  // Get the mention post to reply to
-  const mentionPost = await bsky.getPost(agent, mention.postUrl);
-
-  if (mentionPost) {
-    // Select a random whimsical response
-    const randomResponse = getRandomResponse();
-
-    // Reply to the mention with the whimsical response
-    const posted = await bsky.replyToPost(agent, mentionPost, randomResponse);
-    const reply = posted as { uri?: string; cid?: string } | undefined;
-
-    // Extract the reply post ID and URL
-    const replyPostId = reply?.uri?.split('/').pop() || '';
-    const replyUrl = reply?.uri || '';
-
-    // Mark the mention as done
-    await db.markMentionAsDone({
-      mentionId: mention.id,
-      replyPostId,
-      replyUrl,
-    });
-
-    logger.success(`✅ Replied to self-targeting mention with whimsical response`);
-  } else {
-    // The post no longer exists, so we can't reply to it
-    logger.warn(`⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`);
-
-    // Still mark the mention as done, but without a reply
-    await db.markMentionAsDone({
-      mentionId: mention.id,
-      replyPostId: '',
-      replyUrl: '',
-    });
-
-    logger.info(`✅ Marked self-targeting mention as processed (post unavailable)`);
-  }
+  await replyToMention(agent, mention, getRandomResponse());
+  logger.success(`✅ Handled self-targeting mention with whimsical response`);
 }

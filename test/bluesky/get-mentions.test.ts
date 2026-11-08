@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { BskyAgent } from '@atproto/api';
+import { BskyAgent } from '@atproto/api';
 import type { Notification } from '../../src/types.js';
 
-vi.mock(import('../../src/services/logger.js'), () => ({
+const logger = vi.hoisted(() => ({
   info: vi.fn<() => void>(),
   success: vi.fn<() => void>(),
-  warn: vi.fn<() => void>(),
+  warn: vi.fn<(message: string) => void>(),
   error: vi.fn<() => void>(),
 }));
+
+vi.mock(import('../../src/services/logger.js'), () => logger);
 
 // The bluesky service throws at import time without credentials
 process.env.BLUESKY_IDENTIFIER ||= 'test.bot';
@@ -150,6 +152,32 @@ describe('getMentions', () => {
     expect(listNotifications).toHaveBeenCalledOnce();
   });
 
+  it('warns when it stops paging with unread notifications possibly left behind', async () => {
+    const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { agent } = makeAgent([
+      [makeNotification({ indexedAt: longAgo }), makeNotification({ indexedAt: longAgo })],
+      [makeNotification({ indexedAt: longAgo })],
+    ]);
+
+    await getMentions(agent);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('with 2 unread notifications on the last one'),
+    );
+  });
+
+  it("doesn't warn when it stops at a page that was entirely read", async () => {
+    const { agent } = makeAgent([
+      [makeNotification({ indexedAt: hoursAgo(1) })],
+      [makeNotification({ indexedAt: hoursAgo(2), isRead: true })],
+      [makeNotification({ indexedAt: hoursAgo(3) })],
+    ]);
+
+    await getMentions(agent);
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
   it('reports nothing to mark as read when there are no notifications', async () => {
     const { agent } = makeAgent([[]]);
 
@@ -157,6 +185,75 @@ describe('getMentions', () => {
 
     expect(mentions).toStrictEqual([]);
     expect(latestIndexedAt).toBeNull();
+  });
+});
+
+// A real agent over a fake server, so responses go through the same lexicon
+// validation they would in production
+const makeRealAgent = (respond: () => { status: number; body: unknown }) =>
+  new BskyAgent({
+    service: 'https://pds.example',
+    fetch: async () => {
+      const { status, body } = respond();
+      return Response.json(body, { status });
+    },
+  });
+
+const validNotification = (id: string) => ({
+  uri: `at://did:plc:someone/app.bsky.feed.post/${id}`,
+  cid: 'bafyreihii74kynbhetoy37fuqwzux6cnbhmwkmtmlsigo6jcc4lrgjgoja',
+  author: { did: 'did:plc:someone', handle: 'someone.bsky.social' },
+  reason: 'mention',
+  record: {},
+  isRead: false,
+  indexedAt: hoursAgo(1),
+});
+
+describe('getMentions with notifications Bluesky serves but the lexicon rejects', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('skips the one bad notification instead of failing the whole page', async () => {
+    const agent = makeRealAgent(() => ({
+      status: 200,
+      body: {
+        notifications: [
+          validNotification('good'),
+          {
+            ...validNotification('bad'),
+            // One grapheme over the limit, like the October outage's alt text
+            author: {
+              did: 'did:plc:other',
+              handle: 'other.bsky.social',
+              displayName: 'x'.repeat(65),
+            },
+          },
+          validNotification('also-good'),
+        ],
+      },
+    }));
+
+    const { mentions } = await getMentions(agent);
+
+    expect(mentions.map((mention) => mention.uri)).toStrictEqual([
+      'at://did:plc:someone/app.bsky.feed.post/good',
+      'at://did:plc:someone/app.bsky.feed.post/also-good',
+    ]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /Skipping notification at:\/\/did:plc:someone\/app.bsky.feed.post\/bad.*displayName/u,
+      ),
+    );
+  });
+
+  it('still throws on errors that are not about validation', async () => {
+    const agent = makeRealAgent(() => ({
+      status: 500,
+      body: { error: 'InternalServerError', message: 'Internal Server Error' },
+    }));
+
+    await expect(getMentions(agent)).rejects.toThrow('Internal Server Error');
   });
 });
 
@@ -169,6 +266,9 @@ describe('markNotificationsAsRead', () => {
 
     await markNotificationsAsRead(agent, '2026-01-05T12:00:00.000Z');
 
-    expect(updateSeen).toHaveBeenCalledWith({ seenAt: '2026-01-05T12:00:00.000Z' });
+    expect(updateSeen).toHaveBeenCalledWith(
+      { seenAt: '2026-01-05T12:00:00.000Z' },
+      expect.anything(),
+    );
   });
 });

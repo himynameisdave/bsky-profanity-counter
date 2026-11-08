@@ -7,9 +7,17 @@ on:
   # Allow manual triggering of the workflow
   workflow_dispatch:
 
+# One run at a time, so a slow run doesn't have more piling up behind it
+concurrency:
+  group: update-profile
+  cancel-in-progress: false
+
 jobs:
   update-profile:
     runs-on: ubuntu-latest
+    # A normal run takes under a minute. Without this, a hang runs until
+    # GitHub's 6 hour default.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository

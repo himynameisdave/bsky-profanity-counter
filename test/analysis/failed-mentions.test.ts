@@ -16,6 +16,7 @@ const bsky = vi.hoisted(() => ({
   getUserPosts: vi.fn<(agent: unknown, did: string) => Promise<unknown[]>>(),
   getPost: vi.fn<() => Promise<unknown>>(),
   replyToPost: vi.fn<() => Promise<unknown>>(),
+  findOwnReply: vi.fn<() => Promise<unknown>>(),
 }));
 
 const logger = vi.hoisted(() => ({
@@ -44,6 +45,8 @@ const pastRetryWindow = () => new Date(Date.now() - MENTION_RETRY_WINDOW_MS - HO
 
 // Whose feed can never be fetched, like the account behind the October outage
 const BROKEN_HANDLE = 'broken.example.com';
+
+const failNextReply = () => bsky.replyToPost.mockRejectedValueOnce(new Error('Upstream Failure'));
 
 const makeMention = (overrides: Partial<Mention>): Mention => ({
   id: 'mention',
@@ -124,6 +127,7 @@ describe(processUnanalyzedMentions, () => {
     });
     bsky.getPost.mockResolvedValue({ uri: 'at://did:plc:someone/app.bsky.feed.post/abc' });
     bsky.replyToPost.mockResolvedValue({ uri: 'at://did:plc:bot/app.bsky.feed.post/reply' });
+    bsky.findOwnReply.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -150,6 +154,11 @@ describe(processUnanalyzedMentions, () => {
     {
       step: 'reply',
       failOnce: () => bsky.replyToPost.mockRejectedValueOnce(new Error('Upstream Failure')),
+    },
+    {
+      // getPost only returns null for a deleted post, anything else is thrown
+      step: 'mention post lookup',
+      failOnce: () => bsky.getPost.mockRejectedValueOnce(new Error('Internal Server Error')),
     },
   ])(
     'retries an old, never-attempted mention after a temporary $step error, and replies on a later run',
@@ -272,5 +281,62 @@ describe(processUnanalyzedMentions, () => {
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining('Output/feed/13/post/embed/record/embeds/0/alt is too long'),
     );
+  });
+
+  it('marks a mention done without replying when its post has been deleted', async () => {
+    const table = useMentionTable([makeMention({ id: 'deleted' })]);
+    bsky.getPost.mockResolvedValue(null);
+
+    await processUnanalyzedMentions(agent);
+
+    expect(table.statusOf('deleted')).toBe('DONE');
+    expect(bsky.replyToPost).not.toHaveBeenCalled();
+  });
+
+  it("doesn't reply twice when an earlier attempt replied but couldn't mark the mention done", async () => {
+    const table = useMentionTable([makeMention({ id: 'replied' })]);
+    // The reply goes out, then recording it fails
+    db.markMentionAsDone.mockRejectedValueOnce(new Error('Connection reset'));
+
+    await processUnanalyzedMentions(agent);
+    expect(table.statusOf('replied')).toBe('ANALYZING');
+    expect(bsky.replyToPost).toHaveBeenCalledOnce();
+    // A first attempt can't have replied already, so there's nothing to look for
+    expect(bsky.findOwnReply).not.toHaveBeenCalled();
+
+    // Our reply is in our repo now
+    bsky.findOwnReply.mockResolvedValue({
+      uri: 'at://did:plc:bot/app.bsky.feed.post/reply',
+      cid: 'bafy-reply',
+    });
+    table.startNextRun();
+    await processUnanalyzedMentions(agent);
+
+    expect(table.statusOf('replied')).toBe('DONE');
+    expect(bsky.replyToPost).toHaveBeenCalledOnce();
+    expect(bsky.findOwnReply).toHaveBeenCalledWith(
+      agent,
+      'at://did:plc:someone/app.bsky.feed.post/abc',
+      expect.any(Date),
+    );
+    expect(db.markMentionAsDone).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        mentionId: 'replied',
+        replyUrl: 'at://did:plc:bot/app.bsky.feed.post/reply',
+      }),
+    );
+  });
+
+  it('replies on a retry when no earlier reply turns up', async () => {
+    const table = useMentionTable([makeMention({ id: 'retry' })]);
+    failNextReply();
+
+    await processUnanalyzedMentions(agent);
+    table.startNextRun();
+    await processUnanalyzedMentions(agent);
+
+    expect(bsky.findOwnReply).toHaveBeenCalledOnce();
+    expect(bsky.replyToPost).toHaveBeenCalledTimes(2);
+    expect(table.statusOf('retry')).toBe('DONE');
   });
 });
