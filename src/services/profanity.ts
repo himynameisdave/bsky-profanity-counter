@@ -7,6 +7,7 @@ import {
   toAsciiLowerCaseTransformer,
 } from 'obscenity';
 import BAD_WORDS from '../data/badWords.js';
+import UNQUOTABLE_WORDS from '../data/unquotableWords.js';
 
 // Type for profanity analysis results
 export type ProfanityAnalysis = {
@@ -170,6 +171,22 @@ const MEDALS: Record<number, string> = {
   3: '🥉',
 };
 
+// Keeps the first and last letter of each word (ie: `n****r`), so people can still
+// kind of guess
+const maskWord = (word: string) =>
+  word.replaceAll(/\S+/gu, (part) =>
+    part.length < 3
+      ? `${part[0]}${'*'.repeat(part.length - 1)}`
+      : `${part[0]}${'*'.repeat(part.length - 2)}${part.at(-1)}`,
+  );
+
+/**
+ * How a list entry appears in a reply. Slurs and the like still count, but only
+ * ever show up masked; everything else is quoted as-is.
+ */
+export const renderWord = (word: string): string =>
+  UNQUOTABLE_WORDS.has(word) ? maskWord(word) : word;
+
 // Generate a response message based on the analysis
 export const generateResponseMessage = (
   analysis: ProfanityAnalysis,
@@ -193,7 +210,7 @@ export const generateResponseMessage = (
 
     for (const item of analysis.topThree) {
       const medal = MEDALS[item.rank] ?? '';
-      message += `${medal} "${item.word}" (${item.count.toLocaleString('en-CA')} times)\n`;
+      message += `${medal} "${renderWord(item.word)}" (${item.count.toLocaleString('en-CA')} times)\n`;
     }
   }
 
