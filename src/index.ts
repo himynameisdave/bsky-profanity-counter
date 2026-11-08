@@ -4,6 +4,7 @@ import * as logger from './services/logger.js';
 import * as db from './services/database.js';
 import storeMentions from './mentions.js';
 import { checkAndProcessMentions } from './analysis.js';
+import { describeError } from './errors.js';
 
 // Load environment variables
 dotenv.config();
@@ -52,10 +53,18 @@ async function main() {
     // Now we check for unanalyzed mentions and process them
     await checkAndProcessMentions(agent);
   } catch (error) {
-    logger.error(`❌ Error running the bot:\n\t- ${error}`);
-    await db.disconnect();
+    logger.error(`❌ Error running the bot:\n\t- ${describeError(error)}`);
   }
 }
 
-// Run the main function
-main();
+try {
+  await main();
+} finally {
+  await db.disconnect();
+  // Exit as soon as the run is done, not whenever the event loop drains. A feed
+  // request we gave up on can stay open even after it's aborted (see withTimeout
+  // in services/bluesky.ts), and it would keep this process alive, its work
+  // done, until the workflow timeout killed it.
+  // oxlint-disable-next-line unicorn/no-process-exit -- this is the entrypoint, and stray sockets must not keep it running
+  process.exit();
+}

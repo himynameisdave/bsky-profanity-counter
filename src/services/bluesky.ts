@@ -1,6 +1,7 @@
 import { BskyAgent, type AppBskyFeedDefs, type AppBskyRichtextFacet } from '@atproto/api';
 import dotenv from 'dotenv';
 import * as logger from './logger.js';
+import { describeError } from '../errors.js';
 import type { Notification } from '../types.js';
 
 dotenv.config();
@@ -141,15 +142,106 @@ const getPostDate = (post: AppBskyFeedDefs.PostView | undefined): Date | null =>
   return typeof record?.createdAt === 'string' ? new Date(record.createdAt) : null;
 };
 
-// Get user's posts
+// Posts per page of an author feed (the API's limit)
+const FEED_PAGE_SIZE = 100;
+// How many times we'll ask for a single page of a feed before giving up on it
+export const MAX_FEED_PAGE_ATTEMPTS = 3;
+// Wait before the first retry, doubled for each retry after that
+export const FEED_RETRY_BASE_DELAY_MS = 1000;
+// How long one attempt at a page may take before we abort it. Pages normally
+// come back in well under a second. Even when every attempt times out, giving
+// up on a page takes 3 × 15s plus 3s of backoff, about 48s, well inside the
+// workflow's 15 minute timeout, so the failure is handled before the job is killed.
+export const FEED_PAGE_TIMEOUT_MS = 15_000;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * Runs a request with a deadline. When the deadline passes, the request's
+ * signal is aborted, which normally tears it down, and the returned promise
+ * rejects either way. Don't rely on the abort alone: in testing on Node 22,
+ * fetch sometimes ignored it for a request that had been pending a while.
+ */
+const withTimeout = async <T>(
+  ms: number,
+  request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> => {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(`Timed out after ${ms}ms`);
+      controller.abort(error);
+      reject(error);
+    }, ms);
+  });
+
+  try {
+    return await Promise.race([request(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * Fetches one page of an author feed, retrying with backoff if it fails.
+ *
+ * Throws once every attempt has failed. Retrying forever is not an option:
+ * some failures happen on every attempt, and an endless retry loop hangs the
+ * whole run. For example, @atproto/api rejects a whole page when any post in it
+ * fails lexicon validation, and Bluesky returns that same post every time.
+ * Each attempt has a deadline too, so a request that stalls counts as a failed
+ * attempt instead of hanging forever.
+ */
+const getAuthorFeedPage = async (
+  agent: BskyAgent,
+  did: string,
+  cursor: string | undefined,
+  chunk: number,
+) => {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_FEED_PAGE_ATTEMPTS; attempt++) {
+    try {
+      // Retries are deliberately sequential, each one waits out the last
+      // oxlint-disable-next-line no-await-in-loop
+      return await withTimeout(FEED_PAGE_TIMEOUT_MS, (signal) =>
+        agent.getAuthorFeed({ actor: did, limit: FEED_PAGE_SIZE, cursor }, { signal }),
+      );
+    } catch (error) {
+      lastError = error;
+      logger.warn(
+        `⚠️ Error fetching posts chunk #${chunk} (attempt ${attempt}/${MAX_FEED_PAGE_ATTEMPTS}): ${describeError(error)}`,
+      );
+
+      if (attempt < MAX_FEED_PAGE_ATTEMPTS) {
+        // oxlint-disable-next-line no-await-in-loop
+        await sleep(FEED_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+      }
+    }
+  }
+
+  throw new Error(
+    `Gave up fetching posts chunk #${chunk} for ${did} after ${MAX_FEED_PAGE_ATTEMPTS} attempts`,
+    { cause: lastError },
+  );
+};
+
+/**
+ * Gets a user's posts from the last year, up to MAX_POSTS.
+ * Throws if a page of their feed can't be fetched (see getAuthorFeedPage).
+ */
 export const getUserPosts = async (
   agent: BskyAgent,
   did: string,
 ): Promise<AppBskyFeedDefs.PostView[]> => {
   const allPosts: AppBskyFeedDefs.PostView[] = [];
-  let cursor;
+  let cursor: string | undefined;
   const MAX_POSTS = 25_000; // Maximum number of posts to retrieve
-  const CHUNK_SIZE = 100; // Size of each chunk (API limit)
   const ONE_YEAR_AGO = new Date();
   ONE_YEAR_AGO.setFullYear(ONE_YEAR_AGO.getFullYear() - 1);
 
@@ -163,70 +255,62 @@ export const getUserPosts = async (
   while (allPosts.length < MAX_POSTS && !reachedYearOld) {
     chunkCount++;
 
-    try {
-      // Pagination is inherently sequential: each request needs the previous cursor
-      // oxlint-disable-next-line no-await-in-loop
-      const response = await agent.getAuthorFeed({
-        actor: did,
-        limit: CHUNK_SIZE,
-        cursor,
-      });
+    // Pagination is inherently sequential: each request needs the previous cursor
+    // oxlint-disable-next-line no-await-in-loop
+    const response = await getAuthorFeedPage(agent, did, cursor, chunkCount);
 
-      const posts = response.data.feed.reduce((acc, item) => {
-        // Only include items that are not reposts
-        if (!item.reason) {
-          acc.push(item.post);
-        }
-        return acc;
-      }, [] as AppBskyFeedDefs.PostView[]);
-
-      if (posts.length === 0) {
-        logger.info(`🔍 No more posts found after ${allPosts.length} total posts`);
-        break;
+    const posts = response.data.feed.reduce((acc, item) => {
+      // Only include items that are not reposts
+      if (!item.reason) {
+        acc.push(item.post);
       }
+      return acc;
+    }, [] as AppBskyFeedDefs.PostView[]);
 
-      // Check the date of the last post in this chunk
-      const lastPostDate = getPostDate(posts[posts.length - 1]);
-
-      if (lastPostDate) {
-        oldestPostDate = lastPostDate;
-
-        // Check if we've reached posts older than one year
-        if (lastPostDate < ONE_YEAR_AGO) {
-          reachedYearOld = true;
-          logger.info(`🕒 Reached posts older than one year (${lastPostDate.toISOString()})`);
-
-          // Filter out posts older than one year
-          const recentPosts = posts.filter((post) => {
-            const postDate = getPostDate(post);
-            return postDate !== null && postDate >= ONE_YEAR_AGO;
-          });
-
-          allPosts.push(...recentPosts);
-          logger.info(
-            `✅ Processed chunk #${chunkCount}: Added ${recentPosts.length} posts (within last year), reached year limit`,
-          );
-          break;
-        }
-      }
-
-      // Add all posts from this chunk
-      allPosts.push(...posts);
-
-      logger.info(
-        `✅ Processed chunk #${chunkCount}: Added ${posts.length} posts (total: ${allPosts.length})`,
-      );
-
-      // Break if no cursor for next page
-      if (!response.data.cursor) {
-        logger.info(`🔍 No more pages available after ${allPosts.length} total posts`);
-        break;
-      }
-
-      ({ cursor } = response.data);
-    } catch (error) {
-      logger.error(`❌ Error fetching posts chunk #${chunkCount}: ${error || 'unknown'}`);
+    if (posts.length === 0) {
+      logger.info(`🔍 No more posts found after ${allPosts.length} total posts`);
+      break;
     }
+
+    // Check the date of the last post in this chunk
+    const lastPostDate = getPostDate(posts[posts.length - 1]);
+
+    if (lastPostDate) {
+      oldestPostDate = lastPostDate;
+
+      // Check if we've reached posts older than one year
+      if (lastPostDate < ONE_YEAR_AGO) {
+        reachedYearOld = true;
+        logger.info(`🕒 Reached posts older than one year (${lastPostDate.toISOString()})`);
+
+        // Filter out posts older than one year
+        const recentPosts = posts.filter((post) => {
+          const postDate = getPostDate(post);
+          return postDate !== null && postDate >= ONE_YEAR_AGO;
+        });
+
+        allPosts.push(...recentPosts);
+        logger.info(
+          `✅ Processed chunk #${chunkCount}: Added ${recentPosts.length} posts (within last year), reached year limit`,
+        );
+        break;
+      }
+    }
+
+    // Add all posts from this chunk
+    allPosts.push(...posts);
+
+    logger.info(
+      `✅ Processed chunk #${chunkCount}: Added ${posts.length} posts (total: ${allPosts.length})`,
+    );
+
+    // Break if no cursor for next page
+    if (!response.data.cursor) {
+      logger.info(`🔍 No more pages available after ${allPosts.length} total posts`);
+      break;
+    }
+
+    ({ cursor } = response.data);
   }
 
   // Log the reason for stopping

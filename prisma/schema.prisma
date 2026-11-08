@@ -17,6 +17,8 @@ enum MentionStatus {
   UNPROCESSED
   ANALYZING
   DONE
+  // We kept failing to process it and gave up, so it's never retried
+  FAILED
 }
 
 model Mention {
@@ -26,6 +28,13 @@ model Mention {
   postUrl       String        // URL to the post
   isReply       Boolean       // Whether it's a reply or direct mention
   status        MentionStatus @default(UNPROCESSED)
+  // How many times we've started processing it. Counted when it's claimed, so
+  // an attempt cut short by a killed run still counts. Until it's DONE, every
+  // one of these attempts failed or was cut short.
+  attempts      Int           @default(0)
+  // When we first started processing it. The retry window runs from here, so
+  // time spent waiting in the queue doesn't count against it.
+  firstAttemptedAt DateTime?
   replyPostId   String?       // The ID of our reply post (if we've replied)
   replyUrl      String?       // URL to our reply
   createdAt     DateTime      @default(now())
