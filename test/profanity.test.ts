@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   analyzePosts,
+  analyzeProfanity,
   generateResponseMessage,
   type ProfanityAnalysis,
 } from '../src/services/profanity.js';
@@ -65,6 +66,57 @@ describe('Profanity Service', () => {
       const result = analyzePosts(posts);
       expect(result.totalCount).toBe(0);
       expect(result.topThree).toHaveLength(0);
+    });
+  });
+
+  describe(analyzeProfanity, () => {
+    // List entries used to be dropped into a regex unescaped (see #8)
+    it.each([
+      ['s.o.b.', 'that s.o.b. again', 'sxoxbx'],
+      ['bi+ch', 'what a bi+ch', 'biiich'],
+      ['sh!+', 'sh!+ happens', 'shhh'],
+    ])('matches %s literally', (word, matching, notMatching) => {
+      expect(analyzeProfanity(matching)).toStrictEqual({ [word]: 1 });
+      expect(analyzeProfanity(notMatching)).toStrictEqual({});
+    });
+
+    it("doesn't count part of a word", () => {
+      // The old `masterbat*` entry matched this
+      expect(analyzeProfanity('masterba')).toStrictEqual({});
+      expect(analyzeProfanity('hello shell, class assessment')).toStrictEqual({});
+    });
+
+    it('counts a word at the start of a post', () => {
+      // The list used to have " shits", with a leading space
+      expect(analyzeProfanity('shits happen')).toStrictEqual({ shits: 1 });
+    });
+
+    it('counts a word followed by punctuation', () => {
+      expect(analyzeProfanity('what the fuck! oh shit!! damn, ok. hell?')).toStrictEqual({
+        fuck: 1,
+        shit: 1,
+        damn: 1,
+        hell: 1,
+      });
+    });
+
+    it('counts a phrase once, not once more for each word in it', () => {
+      expect(analyzeProfanity('what a piece of shit')).toStrictEqual({ 'piece of shit': 1 });
+      expect(analyzeProfanity('god damn it, shit-head')).toStrictEqual({
+        'god damn': 1,
+        'shit-head': 1,
+      });
+    });
+
+    it('sees through look-alike characters and case', () => {
+      expect(analyzeProfanity('SHIT, shït and ＦＵＣＫ')).toStrictEqual({
+        shit: 2,
+        fuck: 1,
+      });
+    });
+
+    it('doesn\'t collapse repeated letters, which would make `butt` match "but"', () => {
+      expect(analyzeProfanity('but why')).toStrictEqual({});
     });
   });
 

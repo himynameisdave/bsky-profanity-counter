@@ -31,6 +31,7 @@
     "@prisma/client": "^6.11.1",
     "dotenv": "^17.0.1",
     "loggit": "^1.1.1",
+    "obscenity": "^0.4.6",
     "prisma": "^6.11.1"
   },
   "devDependencies": {

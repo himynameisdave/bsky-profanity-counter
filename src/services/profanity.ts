@@ -1,4 +1,11 @@
 import type { AppBskyFeedDefs } from '@atproto/api';
+import {
+  RegExpMatcher,
+  assignIncrementingIds,
+  parseRawPattern,
+  resolveConfusablesTransformer,
+  toAsciiLowerCaseTransformer,
+} from 'obscenity';
 import BAD_WORDS from '../data/badWords.js';
 
 // Type for profanity analysis results
@@ -13,21 +20,50 @@ export type ProfanityAnalysis = {
   postCount: number; // Number of posts analyzed
 };
 
+// Each entry's id is its index in this array
+const WORDS = [...BAD_WORDS];
+
+// Characters with a meaning in obscenity's pattern syntax
+const escapePattern = (text: string) => text.replaceAll(/[\\[\]?|]/gu, String.raw`\$&`);
+
+/**
+ * Turns a list entry into a whole-word obscenity pattern.
+ *
+ * obscenity's `|` is a regex `\b`, which only works next to a letter or digit.
+ * An entry that starts or ends with punctuation (ie: `sh!+`, `s.o.b.`) gets no
+ * `|` on that side, otherwise it could never match.
+ */
+const toPattern = (word: string) => {
+  const start = /^\w/u.test(word) ? '|' : '';
+  const end = /\w$/u.test(word) ? '|' : '';
+  return parseRawPattern(`${start}${escapePattern(word)}${end}`);
+};
+
+const matcher = new RegExpMatcher({
+  blacklistedTerms: assignIncrementingIds(WORDS.map((word) => toPattern(word))),
+  // Only part of obscenity's English preset. Its leetspeak step turns `!` into
+  // `i`, so "fuck!" became "fucki" and stopped counting. Its repeated-letter
+  // step turns our `butt` into `but` and `xx` into `x`.
+  blacklistMatcherTransformers: [resolveConfusablesTransformer(), toAsciiLowerCaseTransformer()],
+});
+
 // Analyze text for profanities
 export const analyzeProfanity = (text: string): Record<string, number> => {
   const wordCounts: Record<string, number> = {};
 
-  // Convert text to lowercase for case-insensitive matching
-  const lowerText = text.toLowerCase();
+  // Where matches overlap (ie: "piece of shit" and the "shit" in it), only the
+  // longest counts. Sorting by position, longest first, then skipping anything
+  // that starts inside the last counted match does that.
+  const matches = matcher
+    .getAllMatches(text)
+    .toSorted((a, b) => a.startIndex - b.startIndex || b.matchLength - a.matchLength);
 
-  // Check for each profanity in the text
-  for (const word of BAD_WORDS) {
-    // Create a regex that matches the word as a whole word
-    const regex = new RegExp(`\\b${word}\\b`, 'gu');
-    const matches = lowerText.match(regex);
-
-    if (matches) {
-      wordCounts[word] = matches.length;
+  let countedUntil = -1;
+  for (const { startIndex, endIndex, termId } of matches) {
+    if (startIndex > countedUntil) {
+      countedUntil = endIndex;
+      const word = WORDS[termId];
+      wordCounts[word] = (wordCounts[word] ?? 0) + 1;
     }
   }
 
