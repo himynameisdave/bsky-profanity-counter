@@ -51,17 +51,21 @@ const matcher = new RegExpMatcher({
 export const analyzeProfanity = (text: string): Record<string, number> => {
   const wordCounts: Record<string, number> = {};
 
-  // Where matches overlap (ie: "piece of shit" and the "shit" in it), only the
-  // longest counts. Sorting by position, longest first, then skipping anything
-  // that starts inside the last counted match does that.
+  // Where matches overlap, only the longest counts, wherever it starts (ie:
+  // "black cock-sucker" counts `cock-sucker`, not `black cock`). Equal lengths
+  // go to the earlier one. NFC first, so a decomposed "shït" reads the
+  // same as "shït"; obscenity only knows the precomposed characters.
   const matches = matcher
-    .getAllMatches(text)
-    .toSorted((a, b) => a.startIndex - b.startIndex || b.matchLength - a.matchLength);
+    .getAllMatches(text.normalize('NFC'))
+    .toSorted((a, b) => b.matchLength - a.matchLength || a.startIndex - b.startIndex);
 
-  let countedUntil = -1;
+  const counted: { startIndex: number; endIndex: number }[] = [];
   for (const { startIndex, endIndex, termId } of matches) {
-    if (startIndex > countedUntil) {
-      countedUntil = endIndex;
+    const overlaps = counted.some(
+      (match) => startIndex <= match.endIndex && match.startIndex <= endIndex,
+    );
+    if (!overlaps) {
+      counted.push({ startIndex, endIndex });
       const word = WORDS[termId];
       wordCounts[word] = (wordCounts[word] ?? 0) + 1;
     }

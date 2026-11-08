@@ -108,6 +108,16 @@ describe('Profanity Service', () => {
       });
     });
 
+    it('counts the longest of overlapping matches, even when a shorter one starts first', () => {
+      expect(analyzeProfanity('black cock-sucker')).toStrictEqual({ 'cock-sucker': 1 });
+    });
+
+    it('counts a decomposed accent the same as a precomposed one', () => {
+      // "shi" + a combining diaeresis + "t" looks identical to "shït"
+      expect(analyzeProfanity('shït')).toStrictEqual(analyzeProfanity('shït'));
+      expect(analyzeProfanity('shït')).toStrictEqual({ shit: 1 });
+    });
+
     it('sees through look-alike characters and case', () => {
       expect(analyzeProfanity('SHIT, shït and ＦＵＣＫ')).toStrictEqual({
         shit: 2,
