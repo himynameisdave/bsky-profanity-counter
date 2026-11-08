@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { MockInstance } from 'vitest';
 import type { BskyAgent } from '@atproto/api';
 import type * as Db from '../src/services/database.js';
@@ -37,6 +40,14 @@ vi.mock(import('../src/services/logger.js'), () => ({
   error: vi.fn<() => void>(),
 }));
 
+// Points the job summary at a temp file, and returns a reader for it
+const useSummaryFile = () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'summary-'));
+  const summaryPath = path.join(dir, 'summary.md');
+  vi.stubEnv('GITHUB_STEP_SUMMARY', summaryPath);
+  return () => readFileSync(summaryPath, 'utf8');
+};
+
 describe('the entrypoint', () => {
   let exit: MockInstance<typeof process.exit>;
 
@@ -50,10 +61,14 @@ describe('the entrypoint', () => {
     db.disconnect.mockResolvedValue();
     bsky.createAgent.mockResolvedValue({} as BskyAgent);
     bsky.getMentions.mockResolvedValue({ mentions: [], latestIndexedAt: null });
+    analysis.checkAndProcessMentions.mockResolvedValue();
   });
 
   afterEach(() => {
     exit.mockRestore();
+    vi.unstubAllEnvs();
+    // Don't let the run's exit code leak into vitest's own
+    process.exitCode = undefined;
   });
 
   // A request we gave up on can stay open after it's aborted, and would keep
@@ -102,9 +117,62 @@ describe('the entrypoint', () => {
       throw new Error('🕵️ Missing environment variables: DATABASE_URL');
     });
 
-    await expect(import('../src/index.js')).rejects.toThrow('DATABASE_URL');
+    const readSummary = useSummaryFile();
+
+    await import('../src/index.js');
 
     expect(db.resetStuckMentions).not.toHaveBeenCalled();
     expect(bsky.createAgent).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(readSummary()).toContain('| Result | ❌ Failed |');
+  });
+
+  it("exits with an error when it can't log in, so the job goes red", async () => {
+    bsky.createAgent.mockRejectedValue(new Error('AuthenticationRequired'));
+
+    await import('../src/index.js');
+
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('exits with an error when a mention fails', async () => {
+    analysis.checkAndProcessMentions.mockImplementation(async () => {
+      const { stats } = await import('../src/run-stats.js');
+      stats.failed++;
+    });
+
+    await import('../src/index.js');
+
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('exits cleanly when there was nothing to do', async () => {
+    await import('../src/index.js');
+
+    expect(process.exitCode).toBe(0);
+  });
+
+  it('writes a run summary for GitHub Actions', async () => {
+    const readSummary = useSummaryFile();
+    bsky.getMentions.mockResolvedValue({
+      mentions: [{}, {}] as Awaited<ReturnType<typeof Bsky.getMentions>>['mentions'],
+      latestIndexedAt: null,
+    });
+
+    await import('../src/index.js');
+
+    expect(readSummary()).toContain('| Result | ✅ OK |');
+    expect(readSummary()).toContain('| Mentions fetched | 2 |');
+  });
+
+  it('still writes the summary and exits with an error when disconnecting fails', async () => {
+    const readSummary = useSummaryFile();
+    db.disconnect.mockRejectedValue(new Error('Connection reset'));
+
+    await import('../src/index.js');
+
+    expect(readSummary()).toContain('| Other errors | 1 |');
+    expect(process.exitCode).toBe(1);
+    expect(exit).toHaveBeenCalledOnce();
   });
 });

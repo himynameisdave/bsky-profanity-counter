@@ -44,6 +44,7 @@ vi.mock(import('../../src/services/profanity.js'), () => ({
 
 const { processUnanalyzedMentions, MAX_FAILED_ATTEMPTS, MENTION_RETRY_WINDOW_MS } =
   await import('../../src/analysis.js');
+const { stats } = await import('../../src/run-stats.js');
 
 const agent = {} as BskyAgent;
 const HOUR_MS = 60 * 60 * 1000;
@@ -167,6 +168,19 @@ describe(processUnanalyzedMentions, () => {
     expect(table.statusOf('healthy')).toBe('DONE');
   });
 
+  it('counts answered and failed mentions for the run summary', async () => {
+    useMentionTable([
+      makeMention({ id: 'broken', userHandle: BROKEN_HANDLE }),
+      makeMention({ id: 'healthy' }),
+    ]);
+    const before = { ...stats };
+
+    await processUnanalyzedMentions(agent);
+
+    expect(stats.failed - before.failed).toBe(1);
+    expect(stats.answered - before.answered).toBe(1);
+  });
+
   it.each([
     {
       step: 'profile lookup',
@@ -212,10 +226,12 @@ describe(processUnanalyzedMentions, () => {
       table.startNextRun();
     }
 
+    const gaveUpBefore = stats.gaveUp;
     await processUnanalyzedMentions(agent);
 
     expect(table.statusOf('broken')).toBe('FAILED');
     expect(bsky.getUserPosts).toHaveBeenCalledTimes(MAX_FAILED_ATTEMPTS);
+    expect(stats.gaveUp - gaveUpBefore).toBe(1);
   });
 
   it('gives up without trying again once the budget is spent, even if no attempt ever finished', async () => {
@@ -307,11 +323,14 @@ describe(processUnanalyzedMentions, () => {
   it('marks a mention done without replying when its post has been deleted', async () => {
     const table = useMentionTable([makeMention({ id: 'deleted' })]);
     bsky.getPost.mockResolvedValue(null);
+    const before = { ...stats };
 
     await processUnanalyzedMentions(agent);
 
     expect(table.statusOf('deleted')).toBe('DONE');
     expect(bsky.replyToPost).not.toHaveBeenCalled();
+    expect(stats.skipped - before.skipped).toBe(1);
+    expect(stats.answered - before.answered).toBe(0);
   });
 
   it("doesn't reply twice when an earlier attempt replied but couldn't mark the mention done", async () => {

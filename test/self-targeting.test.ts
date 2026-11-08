@@ -74,4 +74,11 @@ describe('Self-targeting replies', () => {
     const [[, replyTo]] = replyToPostMock.mock.calls;
     expect(replyTo).toStrictEqual(MENTION_POST);
   });
+
+  it('says whether it answered, or skipped a deleted post', async () => {
+    await expect(handleSelfTargeting({} as BskyAgent, mention)).resolves.toBe('answered');
+
+    getPostMock.mockResolvedValue(null);
+    await expect(handleSelfTargeting({} as BskyAgent, mention)).resolves.toBe('skipped');
+  });
 });

@@ -1,4 +1,4 @@
-name: Scheduled Application Run
+name: "🤖Beepin' and boopin'"
 
 on:
   schedule:
