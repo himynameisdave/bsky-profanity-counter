@@ -131,4 +131,37 @@ describe('processUnanalyzedMentions for a target with no posts in the last year'
       );
     },
   );
+
+  it('pages past a page of only reposts instead of saying they have no posts', async () => {
+    const reposts = Array.from({ length: 100 }, (_, n) => ({
+      post: {
+        uri: `at://p/repost-${n}`,
+        record: { text: 'hi', createdAt: new Date().toISOString() },
+      },
+      reason: { $type: 'app.bsky.feed.defs#reasonRepost' },
+    }));
+    const original = {
+      post: { uri: 'at://p/1', record: { text: 'oh shit', createdAt: new Date().toISOString() } },
+    };
+    const getAuthorFeed = vi.fn<(params: { cursor?: string }) => Promise<unknown>>(
+      async ({ cursor }) =>
+        cursor ? { data: { feed: [original] } } : { data: { feed: reposts, cursor: 'page-2' } },
+    );
+    const agent = { getAuthorFeed } as unknown as BskyAgent;
+
+    await runMention(agent, 'first');
+
+    expect(getAuthorFeed).toHaveBeenCalledTimes(2);
+    expect(db.createOrUpdateAnalysis).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ userHandle: HANDLE, totalPosts: 1, profanityCount: 1 }),
+    );
+    const firstReply = bsky.replyToPost.mock.lastCall?.[2];
+    expect(firstReply).toContain('has swears');
+
+    await runMention(agent, 'second');
+
+    expect(getAuthorFeed).toHaveBeenCalledTimes(2);
+    expect(bsky.replyToPost).toHaveBeenCalledTimes(2);
+    expect(bsky.replyToPost).toHaveBeenLastCalledWith(agent, expect.anything(), firstReply);
+  });
 });

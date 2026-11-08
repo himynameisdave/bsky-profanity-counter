@@ -351,6 +351,13 @@ export const getUserPosts = async (
     }, [] as AppBskyFeedDefs.PostView[]);
 
     if (posts.length === 0) {
+      // A page of only reposts isn't the end of the feed, so keep going while there's a cursor.
+      // shortcut: reposts aren't checked against the one year cutoff, so a long run of them is
+      // paged through to the end; stop on the repost's `reason.indexedAt` if that gets slow.
+      if (response.data.feed.length > 0 && response.data.cursor) {
+        ({ cursor } = response.data);
+        continue;
+      }
       logger.info(`🔍 No more posts found after ${allPosts.length} total posts`);
       break;
     }
