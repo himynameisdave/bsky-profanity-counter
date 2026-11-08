@@ -27,7 +27,7 @@
     "db:sync": "prisma db pull && prisma generate"
   },
   "dependencies": {
-    "@atproto/api": "^0.15.23",
+    "@atproto/api": "^0.30.3",
     "@prisma/client": "^6.11.1",
     "dotenv": "^17.0.1",
     "loggit": "^1.1.1",
