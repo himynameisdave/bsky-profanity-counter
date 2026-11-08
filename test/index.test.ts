@@ -40,6 +40,14 @@ vi.mock(import('../src/services/logger.js'), () => ({
   error: vi.fn<() => void>(),
 }));
 
+// Points the job summary at a temp file, and returns a reader for it
+const useSummaryFile = () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'summary-'));
+  const summaryPath = path.join(dir, 'summary.md');
+  vi.stubEnv('GITHUB_STEP_SUMMARY', summaryPath);
+  return () => readFileSync(summaryPath, 'utf8');
+};
+
 describe('the entrypoint', () => {
   let exit: MockInstance<typeof process.exit>;
 
@@ -109,10 +117,14 @@ describe('the entrypoint', () => {
       throw new Error('🕵️ Missing environment variables: DATABASE_URL');
     });
 
-    await expect(import('../src/index.js')).rejects.toThrow('DATABASE_URL');
+    const readSummary = useSummaryFile();
+
+    await import('../src/index.js');
 
     expect(db.resetStuckMentions).not.toHaveBeenCalled();
     expect(bsky.createAgent).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(readSummary()).toContain('| Result | ❌ Failed |');
   });
 
   it("exits with an error when it can't log in, so the job goes red", async () => {
@@ -141,9 +153,7 @@ describe('the entrypoint', () => {
   });
 
   it('writes a run summary for GitHub Actions', async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'summary-'));
-    const summaryPath = path.join(dir, 'summary.md');
-    vi.stubEnv('GITHUB_STEP_SUMMARY', summaryPath);
+    const readSummary = useSummaryFile();
     bsky.getMentions.mockResolvedValue({
       mentions: [{}, {}] as Awaited<ReturnType<typeof Bsky.getMentions>>['mentions'],
       latestIndexedAt: null,
@@ -151,8 +161,18 @@ describe('the entrypoint', () => {
 
     await import('../src/index.js');
 
-    const summary = readFileSync(summaryPath, 'utf8');
-    expect(summary).toContain('| Result | ✅ OK |');
-    expect(summary).toContain('| Mentions fetched | 2 |');
+    expect(readSummary()).toContain('| Result | ✅ OK |');
+    expect(readSummary()).toContain('| Mentions fetched | 2 |');
+  });
+
+  it('still writes the summary and exits with an error when disconnecting fails', async () => {
+    const readSummary = useSummaryFile();
+    db.disconnect.mockRejectedValue(new Error('Connection reset'));
+
+    await import('../src/index.js');
+
+    expect(readSummary()).toContain('| Other errors | 1 |');
+    expect(process.exitCode).toBe(1);
+    expect(exit).toHaveBeenCalledOnce();
   });
 });

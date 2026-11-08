@@ -1,6 +1,7 @@
 import type { BskyAgent } from '@atproto/api';
 import type { Mention } from '@prisma/client';
 import { replyToMention } from './reply.js';
+import type { ReplyOutcome } from './reply.js';
 import * as logger from './logger.js';
 
 /**
@@ -28,9 +29,13 @@ function getRandomResponse() {
  * Handles mentions where the bot is targeting itself.
  * Should only be called when we've already confirmed this is a self-targeting attempt.
  */
-export async function handleSelfTargeting(agent: BskyAgent, mention: Mention): Promise<void> {
+export async function handleSelfTargeting(
+  agent: BskyAgent,
+  mention: Mention,
+): Promise<ReplyOutcome> {
   logger.info(`🤖 Bot was targeted by itself, responding with whimsical message`);
 
-  await replyToMention(agent, mention, getRandomResponse());
+  const outcome = await replyToMention(agent, mention, getRandomResponse());
   logger.success(`✅ Handled self-targeting mention with whimsical response`);
+  return outcome;
 }

@@ -323,11 +323,14 @@ describe(processUnanalyzedMentions, () => {
   it('marks a mention done without replying when its post has been deleted', async () => {
     const table = useMentionTable([makeMention({ id: 'deleted' })]);
     bsky.getPost.mockResolvedValue(null);
+    const before = { ...stats };
 
     await processUnanalyzedMentions(agent);
 
     expect(table.statusOf('deleted')).toBe('DONE');
     expect(bsky.replyToPost).not.toHaveBeenCalled();
+    expect(stats.skipped - before.skipped).toBe(1);
+    expect(stats.answered - before.answered).toBe(0);
   });
 
   it("doesn't reply twice when an earlier attempt replied but couldn't mark the mention done", async () => {

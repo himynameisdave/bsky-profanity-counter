@@ -8,6 +8,8 @@ export const stats = {
   fetched: 0,
   stored: 0,
   answered: 0,
+  // Mentions whose post was deleted before we could reply
+  skipped: 0,
   // Mentions we hit an error on, that a later run retries
   failed: 0,
   gaveUp: 0,
@@ -34,6 +36,7 @@ export function writeSummary() {
     ['Mentions fetched', stats.fetched],
     ['Mentions stored', stats.stored],
     ['Mentions answered', stats.answered],
+    ['Mentions skipped (post deleted)', stats.skipped],
     ['Mentions failed (retried later)', stats.failed],
     ['Mentions given up on', stats.gaveUp],
     ['Other errors', stats.errors],

@@ -66,8 +66,8 @@ async function processMention(agent: BskyAgent, mention: Mention) {
     // Check if user is trying to target the bot itself. Our handle comes from the
     // session, so this holds whatever account the bot is running as
     if (mention.userHandle === agent.session?.handle) {
-      await handleSelfTargeting(agent, mention);
-      stats.answered++;
+      const outcome = await handleSelfTargeting(agent, mention);
+      stats[outcome]++;
       return; // Exit early, don't do profanity analysis
     }
 
@@ -95,8 +95,8 @@ async function processMention(agent: BskyAgent, mention: Mention) {
         freshAnalysis.totalPosts,
       );
 
-      await replyToMention(agent, mention, responseMessage, freshAnalysis.id);
-      stats.answered++;
+      const outcome = await replyToMention(agent, mention, responseMessage, freshAnalysis.id);
+      stats[outcome]++;
       logger.success(`✅ Used cached analysis for mention for ${mention.userHandle}`);
     } else {
       // No fresh analysis, need to analyze post history
@@ -130,8 +130,8 @@ async function processMention(agent: BskyAgent, mention: Mention) {
         posts.length,
       );
 
-      await replyToMention(agent, mention, responseMessage, dbAnalysis.id);
-      stats.answered++;
+      const outcome = await replyToMention(agent, mention, responseMessage, dbAnalysis.id);
+      stats[outcome]++;
       logger.success(`✅ Analyzed ${posts.length} posts for mention for ${mention.userHandle}`);
     }
   } catch (error) {

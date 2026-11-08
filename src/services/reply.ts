@@ -8,6 +8,9 @@ import * as logger from './logger.js';
 // one that posted the reply
 const CLOCK_SLACK_MS = 60 * 60 * 1000;
 
+// `skipped` means the mention's post was deleted, so nothing was posted
+export type ReplyOutcome = 'answered' | 'skipped';
+
 /**
  * Replies to a mention with `text` and marks it done.
  *
@@ -21,7 +24,7 @@ export async function replyToMention(
   mention: Mention,
   text: string,
   analysisId?: string,
-): Promise<void> {
+): Promise<ReplyOutcome> {
   const mentionPost = await bsky.getPost(agent, mention.postUrl);
 
   if (!mentionPost) {
@@ -32,7 +35,7 @@ export async function replyToMention(
       analysisId,
     });
     logger.info(`✅ Marked mention ${mention.id} as processed (post deleted)`);
-    return;
+    return 'skipped';
   }
 
   // `attempts` includes this one, so anything above 1 means an earlier attempt
@@ -60,4 +63,5 @@ export async function replyToMention(
     replyUrl: reply.uri,
     analysisId,
   });
+  return 'answered';
 }
