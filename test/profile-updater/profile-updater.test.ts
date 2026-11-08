@@ -1,5 +1,23 @@
-import { describe, it, expect } from 'vitest';
-import { formatNumber, generateProfileDescription } from '../../src/services/profile-updater.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { BskyAgent } from '@atproto/api';
+import type * as Db from '../../src/services/database.js';
+import {
+  formatNumber,
+  generateProfileDescription,
+  updateProfileDescription,
+} from '../../src/services/profile-updater.js';
+
+const db = vi.hoisted(() => ({
+  getTotalProfanityCount: vi.fn<typeof Db.getTotalProfanityCount>(),
+}));
+
+vi.mock(import('../../src/services/database.js'), () => db);
+vi.mock(import('../../src/services/logger.js'), () => ({
+  info: vi.fn<() => void>(),
+  success: vi.fn<() => void>(),
+  warn: vi.fn<() => void>(),
+  error: vi.fn<() => void>(),
+}));
 
 const expectedDescription = (formattedCount: string) =>
   `Tag me and I will respond telling you how much a profanity you (or the user you're replying to) has used in the last year (it may take me a few minutes to respond).
@@ -35,6 +53,26 @@ describe('Profile Updater', () => {
 
     it('should handle large numbers', () => {
       expect(generateProfileDescription(999_999_999)).toBe(expectedDescription('999,999,999'));
+    });
+  });
+
+  describe(updateProfileDescription, () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      db.getTotalProfanityCount.mockResolvedValue(1234);
+    });
+
+    it('leaves out whichever account the bot is logged in as', async () => {
+      const agent = {
+        session: { handle: 'counter.example.com', did: 'did:plc:counter' },
+        upsertProfile: vi.fn<BskyAgent['upsertProfile']>(),
+      } as unknown as BskyAgent;
+
+      await updateProfileDescription(agent);
+
+      expect(db.getTotalProfanityCount).toHaveBeenCalledExactlyOnceWith({
+        excludeHandle: 'counter.example.com',
+      });
     });
   });
 });

@@ -10,13 +10,16 @@ Every change must pass all four of these locally, in this order:
 ```bash
 pnpm format:check   # oxfmt
 pnpm lint           # oxlint, --deny-warnings
-pnpm typecheck      # tsc --noEmit
+pnpm typecheck      # tsc --noEmit, over src/ and test/
 pnpm test           # vitest run
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly these on every PR, and a `pre-commit` hook
-(`.githooks/pre-commit`, wired up by the `prepare` script) runs the format and lint checks
+CI (`.github/workflows/ci.yml`) runs these on every PR, then `pnpm build`, and a `pre-commit`
+hook (`.githooks/pre-commit`, wired up by the `prepare` script) runs the format and lint checks
 before any commit lands. Do not bypass the hook with `--no-verify`.
+
+`tsconfig.json` covers `src/` and `test/` and never emits. `pnpm build` compiles just `src/`
+to `dist/` with `tsconfig.build.json`. If you touch either tsconfig, run `pnpm build` too.
 
 ## Linting and formatting
 
@@ -34,7 +37,9 @@ before any commit lands. Do not bypass the hook with `--no-verify`.
 - New behaviour needs a new test. Bug fixes need a test that fails without the fix.
 - Tests live in `test/`, mirroring `src/`.
 - Tests must not require a live database or network. Anything that does gets guarded with
-  `describe.skipIf(...)` so CI stays green (see `test/profile-updater/db-query.test.ts`).
+  `describe.skipIf(...)` so CI stays green (see `test/database/db-query.test.ts`).
+- Tests are typechecked, so type mocks against the real thing:
+  `vi.fn<typeof Db.storeMention>()`, with `import type * as Db from '../src/services/database.js'`.
 
 ## Conventions
 
@@ -43,6 +48,11 @@ before any commit lands. Do not bypass the hook with `--no-verify`.
 - Type-only imports use the top-level form: `import type { Foo } from '...'`.
 - The `@atproto/api` record types are loosely typed. Narrow them with a local type and a
   `typeof` check rather than casting to `any`.
+- Only the entry points read the environment, by calling `loadEnv()` from `src/config.ts` once
+  and passing values down (ie: `createAgent(env.bluesky)`). Nothing else in `src/` reads
+  `process.env` or calls `dotenv`. Limits worth tuning live in `src/config.ts` too.
+- Never hardcode the bot's handle or DID; read them from `agent.session`, so forks just work.
+- `src/services/database.ts` owns the one `PrismaClient`. Database access goes through it.
 
 ## Commits and PR titles
 

@@ -1,31 +1,7 @@
 import type { BskyAgent } from '@atproto/api';
-import { PrismaClient } from '@prisma/client';
+import * as db from './database.js';
 import * as logger from './logger.js';
 import { describeError } from '../errors.js';
-
-const prisma = new PrismaClient();
-
-/**
- * Get the total profanity count from the Analysis table,
- * excluding the bot itself (profanity.accountant)
- */
-export async function getTotalProfanityCount(): Promise<number> {
-  // `_sum` is Prisma's aggregate API, not ours to rename
-  // oxlint-disable-next-line no-underscore-dangle
-  const result = await prisma.analysis.aggregate({
-    _sum: {
-      profanityCount: true,
-    },
-    where: {
-      userHandle: {
-        not: 'profanity.accountant',
-      },
-    },
-  });
-
-  // oxlint-disable-next-line no-underscore-dangle
-  return result._sum.profanityCount || 0;
-}
 
 /**
  * Format a number with commas for readability
@@ -52,7 +28,8 @@ export async function updateProfileDescription(agent: BskyAgent): Promise<void> 
   try {
     logger.info('📊 Getting total profanity count...');
 
-    const totalCount = await getTotalProfanityCount();
+    // The bot never counts itself, whatever handle it's running under
+    const totalCount = await db.getTotalProfanityCount({ excludeHandle: agent.session?.handle });
     logger.info(`📈 Total profanity count: ${formatNumber(totalCount)}`);
 
     const newDescription = generateProfileDescription(totalCount);
@@ -71,11 +48,4 @@ export async function updateProfileDescription(agent: BskyAgent): Promise<void> 
     logger.error(`❌ Error updating profile description: ${describeError(error)}`);
     throw error;
   }
-}
-
-/**
- * Close the database connection when done
- */
-export async function disconnect(): Promise<void> {
-  await prisma.$disconnect();
 }

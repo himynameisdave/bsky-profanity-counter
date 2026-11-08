@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { PrismaClient } from '@prisma/client';
 
 const tx = vi.hoisted(() => ({
   mention: {
@@ -10,7 +11,7 @@ const tx = vi.hoisted(() => ({
 vi.mock(import('@prisma/client'), () => ({
   PrismaClient: vi.fn<() => unknown>(() => ({
     $transaction: async (run: (client: typeof tx) => Promise<unknown>) => run(tx),
-  })),
+  })) as unknown as typeof PrismaClient,
 }));
 
 const { getUnprocessedMention } = await import('../../src/services/database.js');

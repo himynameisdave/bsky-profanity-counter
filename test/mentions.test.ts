@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BskyAgent } from '@atproto/api';
 import type { Notification } from '../src/types.js';
+import type * as Db from '../src/services/database.js';
+import type * as Bsky from '../src/services/bluesky.js';
 
 vi.mock(import('../src/services/database.js'), () => ({
-  storeMention: vi.fn<(mention: { userHandle: string; postId: string }) => Promise<unknown>>(),
+  storeMention: vi.fn<typeof Db.storeMention>(),
 }));
 
 vi.mock(import('../src/services/bluesky.js'), () => ({
-  markNotificationsAsRead: vi.fn<(agent: unknown, seenAt: string) => Promise<void>>(),
-  getPost: vi.fn<() => void>(),
-  getProfile: vi.fn<() => void>(),
+  markNotificationsAsRead: vi.fn<typeof Bsky.markNotificationsAsRead>(),
+  getPost: vi.fn<typeof Bsky.getPost>(),
+  getProfile: vi.fn<typeof Bsky.getProfile>(),
 }));
 
 vi.mock(import('../src/services/logger.js'), () => ({

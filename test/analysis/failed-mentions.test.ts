@@ -1,22 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { BskyAgent } from '@atproto/api';
-import type { Mention } from '@prisma/client';
+import type { AppBskyActorDefs, AppBskyFeedDefs, BskyAgent } from '@atproto/api';
+import type { Analysis, Mention } from '@prisma/client';
+import type * as Db from '../../src/services/database.js';
+import type * as Bsky from '../../src/services/bluesky.js';
+import type * as Profanity from '../../src/services/profanity.js';
 
 const db = vi.hoisted(() => ({
-  getUnprocessedMentionsCount: vi.fn<() => Promise<number>>(),
-  getUnprocessedMention: vi.fn<() => Promise<unknown>>(),
-  findFreshAnalysis: vi.fn<() => Promise<unknown>>(),
-  createOrUpdateAnalysis: vi.fn<() => Promise<unknown>>(),
-  markMentionAsDone: vi.fn<(args: { mentionId: string }) => Promise<unknown>>(),
-  markMentionAsFailed: vi.fn<(mentionId: string) => Promise<unknown>>(),
+  getUnprocessedMentionsCount: vi.fn<typeof Db.getUnprocessedMentionsCount>(),
+  getUnprocessedMention: vi.fn<typeof Db.getUnprocessedMention>(),
+  findFreshAnalysis: vi.fn<typeof Db.findFreshAnalysis>(),
+  createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
+  markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
+  markMentionAsFailed: vi.fn<typeof Db.markMentionAsFailed>(),
 }));
 
 const bsky = vi.hoisted(() => ({
-  getProfile: vi.fn<(agent: unknown, handle: string) => Promise<{ did: string }>>(),
-  getUserPosts: vi.fn<(agent: unknown, did: string) => Promise<unknown[]>>(),
-  getPost: vi.fn<() => Promise<unknown>>(),
-  replyToPost: vi.fn<() => Promise<unknown>>(),
-  findOwnReply: vi.fn<() => Promise<unknown>>(),
+  getProfile: vi.fn<typeof Bsky.getProfile>(),
+  getUserPosts: vi.fn<typeof Bsky.getUserPosts>(),
+  getPost: vi.fn<typeof Bsky.getPost>(),
+  replyToPost: vi.fn<typeof Bsky.replyToPost>(),
+  findOwnReply: vi.fn<typeof Bsky.findOwnReply>(),
 }));
 
 const logger = vi.hoisted(() => ({
@@ -30,8 +33,13 @@ vi.mock(import('../../src/services/database.js'), () => db);
 vi.mock(import('../../src/services/bluesky.js'), () => bsky);
 vi.mock(import('../../src/services/logger.js'), () => logger);
 vi.mock(import('../../src/services/profanity.js'), () => ({
-  analyzePosts: vi.fn<() => unknown>(() => ({ totalCount: 0, wordCounts: {}, topThree: [] })),
-  generateResponseMessage: vi.fn<() => string>(() => 'Squeaky clean!'),
+  analyzePosts: vi.fn<typeof Profanity.analyzePosts>(() => ({
+    totalCount: 0,
+    wordCounts: {},
+    topThree: [],
+    postCount: 1,
+  })),
+  generateResponseMessage: vi.fn<typeof Profanity.generateResponseMessage>(() => 'Squeaky clean!'),
 }));
 
 const { processUnanalyzedMentions, MAX_FAILED_ATTEMPTS, MENTION_RETRY_WINDOW_MS } =
@@ -92,10 +100,14 @@ const useMentionTable = (mentions: Mention[]) => {
     return { ...row };
   });
   db.markMentionAsDone.mockImplementation(async ({ mentionId }) => {
-    find(mentionId).status = 'DONE';
+    const row = find(mentionId);
+    row.status = 'DONE';
+    return { ...row };
   });
   db.markMentionAsFailed.mockImplementation(async (mentionId) => {
-    find(mentionId).status = 'FAILED';
+    const row = find(mentionId);
+    row.status = 'FAILED';
+    return { ...row };
   });
 
   return {
@@ -116,17 +128,26 @@ describe(processUnanalyzedMentions, () => {
     vi.clearAllMocks();
 
     db.findFreshAnalysis.mockResolvedValue(null);
-    db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' });
+    db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' } as Analysis);
 
-    bsky.getProfile.mockImplementation(async (_agent, handle) => ({ did: `did:plc:${handle}` }));
+    bsky.getProfile.mockImplementation(
+      async (_agent, handle) =>
+        ({ did: `did:plc:${handle}` }) as AppBskyActorDefs.ProfileViewDetailed,
+    );
     bsky.getUserPosts.mockImplementation(async (_agent, did) => {
       if (did === `did:plc:${BROKEN_HANDLE}`) {
         throw new Error('Gave up fetching posts chunk #1');
       }
-      return [{ uri: 'at://did:plc:someone/app.bsky.feed.post/1' }];
+      return [{ uri: 'at://did:plc:someone/app.bsky.feed.post/1' } as AppBskyFeedDefs.PostView];
     });
-    bsky.getPost.mockResolvedValue({ uri: 'at://did:plc:someone/app.bsky.feed.post/abc' });
-    bsky.replyToPost.mockResolvedValue({ uri: 'at://did:plc:bot/app.bsky.feed.post/reply' });
+    bsky.getPost.mockResolvedValue({
+      uri: 'at://did:plc:someone/app.bsky.feed.post/abc',
+      cid: 'bafy-abc',
+    });
+    bsky.replyToPost.mockResolvedValue({
+      uri: 'at://did:plc:bot/app.bsky.feed.post/reply',
+      cid: 'bafy-reply',
+    });
     bsky.findOwnReply.mockResolvedValue(null);
   });
 

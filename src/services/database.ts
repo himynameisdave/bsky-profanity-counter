@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { ANALYSIS_CACHE_TTL_MS } from '../config.js';
 
 // Type for profanity details stored in JSON
 export type ProfanityDetails = {
@@ -8,7 +9,8 @@ export type ProfanityDetails = {
   topProfanities: { word: string; count: number }[];
 };
 
-// Initialize Prisma client (only once at module level)
+// The one Prisma client for the whole app. Everything that touches the database
+// goes through this module, so there's a single connection pool to close.
 const prisma = new PrismaClient();
 
 /**
@@ -94,18 +96,6 @@ export async function getUnprocessedMentionsCount() {
 }
 
 /**
- * Mark a mention as being analyzed
- * This is now handled in the getUnprocessedMention transaction,
- * but keeping for backward compatibility
- */
-export async function markMentionAsAnalyzing(mentionId: string) {
-  return prisma.mention.update({
-    where: { id: mentionId },
-    data: { status: 'ANALYZING' },
-  });
-}
-
-/**
  * Mark a mention as done and store reply information
  */
 export async function markMentionAsDone({
@@ -142,17 +132,14 @@ export async function markMentionAsFailed(mentionId: string) {
 }
 
 /**
- * Find a fresh analysis (within 24 hours) for a user
+ * Find an analysis of a user that's fresh enough to reuse (see ANALYSIS_CACHE_TTL_MS)
  */
 export async function findFreshAnalysis(userHandle: string) {
-  const oneDayAgo = new Date();
-  oneDayAgo.setDate(oneDayAgo.getDate() - 1);
-
   return prisma.analysis.findFirst({
     where: {
       userHandle,
       lastAnalyzedAt: {
-        gte: oneDayAgo,
+        gte: new Date(Date.now() - ANALYSIS_CACHE_TTL_MS),
       },
     },
   });
@@ -221,10 +208,30 @@ export async function cleanupOldAnalyses(olderThanDays = 30) {
 }
 
 /**
+ * Total profanity across every analysis, leaving out `excludeHandle` (the bot
+ * itself) when it's given
+ */
+export async function getTotalProfanityCount({
+  excludeHandle,
+}: { excludeHandle?: string } = {}): Promise<number> {
+  // `_sum` is Prisma's aggregate API, not ours to rename
+  // oxlint-disable-next-line no-underscore-dangle
+  const result = await prisma.analysis.aggregate({
+    _sum: {
+      profanityCount: true,
+    },
+    where: excludeHandle ? { userHandle: { not: excludeHandle } } : {},
+  });
+
+  // oxlint-disable-next-line no-underscore-dangle
+  return result._sum.profanityCount ?? 0;
+}
+
+/**
  * Reset mentions that are stuck in ANALYZING state for more than the specified minutes
  * This helps recover from crashes or process terminations
  */
-export async function resetStuckMentions(olderThanMinutes = 30) {
+export async function resetStuckMentions(olderThanMinutes: number) {
   const cutoffDate = new Date(Date.now() - olderThanMinutes * 60 * 1000);
 
   const result = await prisma.mention.updateMany({

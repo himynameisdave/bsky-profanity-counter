@@ -5,20 +5,11 @@ import {
   type AppBskyFeedDefs,
   type AppBskyRichtextFacet,
 } from '@atproto/api';
-import dotenv from 'dotenv';
 import * as logger from './logger.js';
 import { describeError } from '../errors.js';
+import { BLUESKY_SERVICE, MAX_POSTS } from '../config.js';
+import type { BlueskyCredentials } from '../config.js';
 import type { Notification } from '../types.js';
-
-dotenv.config();
-
-// Environment variables
-const { BLUESKY_IDENTIFIER } = process.env;
-const { BLUESKY_PASSWORD } = process.env;
-
-if (!BLUESKY_IDENTIFIER || !BLUESKY_PASSWORD) {
-  throw new Error('Missing Bluesky credentials in environment variables');
-}
 
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => {
@@ -70,19 +61,19 @@ export const isNotFound = (error: unknown): boolean =>
     (error.error === 'InvalidRequest' && error.message.startsWith('Could not find repo')));
 
 // Create and authenticate the Bluesky agent
-export const createAgent = async (): Promise<BskyAgent> => {
+export const createAgent = async ({
+  identifier,
+  password,
+}: BlueskyCredentials): Promise<BskyAgent> => {
   const agent = new BskyAgent({
-    service: 'https://bsky.social',
+    service: BLUESKY_SERVICE,
   });
 
-  await withTimeout(REQUEST_TIMEOUT_MS, () =>
-    agent.login({
-      identifier: BLUESKY_IDENTIFIER,
-      password: BLUESKY_PASSWORD,
-    }),
-  );
+  await withTimeout(REQUEST_TIMEOUT_MS, () => agent.login({ identifier, password }));
 
-  logger.success('🔑 Successfully authenticated with Bluesky');
+  logger.success(
+    `🔑 Successfully authenticated with Bluesky as ${agent.session?.handle} (${agent.session?.did})`,
+  );
 
   return agent;
 };
@@ -324,7 +315,6 @@ export const getUserPosts = async (
 ): Promise<AppBskyFeedDefs.PostView[]> => {
   const allPosts: AppBskyFeedDefs.PostView[] = [];
   let cursor: string | undefined;
-  const MAX_POSTS = 25_000; // Maximum number of posts to retrieve
   const ONE_YEAR_AGO = new Date();
   ONE_YEAR_AGO.setFullYear(ONE_YEAR_AGO.getFullYear() - 1);
 

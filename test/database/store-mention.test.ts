@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { PrismaClient } from '@prisma/client';
 
 const { upsert } = vi.hoisted(() => ({
   upsert: vi.fn<(args: { where: unknown; update: unknown; create: unknown }) => Promise<unknown>>(),
@@ -7,7 +8,7 @@ const { upsert } = vi.hoisted(() => ({
 vi.mock(import('@prisma/client'), () => ({
   PrismaClient: vi.fn<() => { mention: { upsert: typeof upsert } }>(() => ({
     mention: { upsert },
-  })),
+  })) as unknown as typeof PrismaClient,
 }));
 
 const { storeMention } = await import('../../src/services/database.js');

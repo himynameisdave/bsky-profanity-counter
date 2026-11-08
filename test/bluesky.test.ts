@@ -2,13 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import type { BskyAgent } from '@atproto/api';
 import { getReplyRefs, replyToPost } from '../src/services/bluesky.js';
 
-// bluesky.js throws at import time when credentials are missing, and hoisted
-// callbacks run before any import, so this is the spot to make sure it has some
-vi.hoisted(() => {
-  process.env.BLUESKY_IDENTIFIER ??= 'test.bot';
-  process.env.BLUESKY_PASSWORD ??= 'test-password';
-});
-
 vi.mock(import('../src/services/logger.js'), () => ({
   info: vi.fn<() => void>(),
   success: vi.fn<() => void>(),

@@ -57,17 +57,17 @@ async function giveUpOnMention(mention: Mention) {
  */
 async function processMention(agent: BskyAgent, mention: Mention) {
   try {
-    // The mention is already marked as ANALYZING by our transaction
-    // so we don't need to call markMentionAsAnalyzing here anymore
+    // getUnprocessedMention already marked it ANALYZING when it claimed it
     logger.info(`🔍 Processing mention for user: ${mention.userHandle}`);
 
-    // Check if user is trying to target the bot itself
-    if (mention.userHandle === 'profanity.accountant') {
+    // Check if user is trying to target the bot itself. Our handle comes from the
+    // session, so this holds whatever account the bot is running as
+    if (mention.userHandle === agent.session?.handle) {
       await handleSelfTargeting(agent, mention);
       return; // Exit early, don't do profanity analysis
     }
 
-    // Check if we have a fresh analysis (less than 24 hours old)
+    // Check if we have a fresh analysis (see ANALYSIS_CACHE_TTL_MS)
     const freshAnalysis = await db.findFreshAnalysis(mention.userHandle);
 
     if (freshAnalysis) {

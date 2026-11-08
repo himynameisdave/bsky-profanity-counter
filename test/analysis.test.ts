@@ -1,16 +1,37 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { AppBskyActorDefs, AppBskyFeedDefs, BskyAgent } from '@atproto/api';
+import type { Analysis, Mention } from '@prisma/client';
+import type * as Db from '../src/services/database.js';
+import type * as Bsky from '../src/services/bluesky.js';
+import type * as Profanity from '../src/services/profanity.js';
 import { WHIMSICAL_RESPONSES } from '../src/services/self-targeting.js';
 
-// Mock the dependencies
-vi.mock(import('../src/services/database.js'), () => ({
-  markMentionAsDone: vi.fn<() => void>(),
+const db = vi.hoisted(() => ({
+  getUnprocessedMentionsCount: vi.fn<typeof Db.getUnprocessedMentionsCount>(),
+  getUnprocessedMention: vi.fn<typeof Db.getUnprocessedMention>(),
+  findFreshAnalysis: vi.fn<typeof Db.findFreshAnalysis>(),
+  createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
+  markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
 }));
 
-vi.mock(import('../src/services/bluesky.js'), () => ({
-  getPost: vi.fn<() => void>(),
-  replyToPost: vi.fn<() => void>(),
+const bsky = vi.hoisted(() => ({
+  getProfile: vi.fn<typeof Bsky.getProfile>(),
+  getUserPosts: vi.fn<typeof Bsky.getUserPosts>(),
+  getPost: vi.fn<typeof Bsky.getPost>(),
+  replyToPost: vi.fn<typeof Bsky.replyToPost>(),
 }));
 
+vi.mock(import('../src/services/database.js'), () => db);
+vi.mock(import('../src/services/bluesky.js'), () => bsky);
+vi.mock(import('../src/services/profanity.js'), () => ({
+  analyzePosts: vi.fn<typeof Profanity.analyzePosts>(() => ({
+    totalCount: 0,
+    wordCounts: {},
+    topThree: [],
+    postCount: 1,
+  })),
+  generateResponseMessage: vi.fn<typeof Profanity.generateResponseMessage>(() => 'Squeaky clean!'),
+}));
 vi.mock(import('../src/services/logger.js'), () => ({
   info: vi.fn<() => void>(),
   success: vi.fn<() => void>(),
@@ -18,53 +39,85 @@ vi.mock(import('../src/services/logger.js'), () => ({
   error: vi.fn<() => void>(),
 }));
 
-// We need to test the processMention function, but it's not exported
-// So we'll test the behavior by importing the module and calling the exported function
-// For now, let's create a test that validates the logic we added
+const { processUnanalyzedMentions } = await import('../src/analysis.js');
 
-describe('Self-Targeting Detection', () => {
-  it('should validate bot handle detection logic', () => {
-    // Test the condition that we added
-    const botHandle = 'profanity.accountant';
-    const testMention = { userHandle: botHandle };
+// Deliberately not profanity.accountant: someone running their own copy of the
+// bot logs in as their own account, and the self-check has to follow it
+const BOT_HANDLE = 'counter.example.com';
 
-    // This should trigger the self-targeting detection
-    expect(testMention.userHandle).toBe('profanity.accountant');
+const agent = {
+  session: { handle: BOT_HANDLE, did: 'did:plc:counter' },
+} as unknown as BskyAgent;
 
-    // Test with different handles
-    const regularMention = { userHandle: 'regular.user' };
-    expect(regularMention.userHandle).not.toBe('profanity.accountant');
+const MENTION_POST = { uri: 'at://did:plc:someone/app.bsky.feed.post/abc', cid: 'bafy-abc' };
+
+const makeMention = (userHandle: string): Mention => ({
+  id: 'mention',
+  userHandle,
+  postId: 'abc',
+  postUrl: MENTION_POST.uri,
+  isReply: true,
+  status: 'ANALYZING',
+  attempts: 1,
+  firstAttemptedAt: new Date(),
+  replyPostId: null,
+  replyUrl: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  analysisId: null,
+});
+
+// A queue holding just this one mention
+const queue = (mention: Mention) => {
+  db.getUnprocessedMentionsCount.mockResolvedValueOnce(1).mockResolvedValue(0);
+  db.getUnprocessedMention.mockResolvedValueOnce(mention);
+};
+
+// The text of the one reply we posted
+const repliedWith = () => {
+  expect(bsky.replyToPost).toHaveBeenCalledOnce();
+  // replyToPost(agent, post, text)
+  return bsky.replyToPost.mock.calls[0][2];
+};
+
+describe('processUnanalyzedMentions when someone asks the bot to audit itself', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    db.findFreshAnalysis.mockResolvedValue(null);
+    db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' } as Analysis);
+    bsky.getProfile.mockImplementation(
+      async (_agent, handle) =>
+        ({ did: `did:plc:${handle}` }) as AppBskyActorDefs.ProfileViewDetailed,
+    );
+    bsky.getUserPosts.mockResolvedValue([{ uri: 'post' } as AppBskyFeedDefs.PostView]);
+    bsky.getPost.mockResolvedValue(MENTION_POST);
+    bsky.replyToPost.mockResolvedValue({
+      uri: 'at://did:plc:counter/app.bsky.feed.post/reply',
+      cid: 'bafy-reply',
+    });
   });
 
-  it('should have whimsical responses with nerdy accountant personality', () => {
-    // Test that all responses are non-empty and contain expected elements
-    for (const response of WHIMSICAL_RESPONSES) {
-      expect(response.length).toBeGreaterThan(0);
-    }
+  it('replies with a whimsical one-liner instead of counting its own posts', async () => {
+    queue(makeMention(BOT_HANDLE));
 
-    // Test that responses contain expected accountant/nerdy patterns
-    const responseText = WHIMSICAL_RESPONSES.join(' ').toLowerCase();
-    expect(responseText).toContain('account');
-    expect(responseText).toContain('audit');
-    expect(responseText).toContain('ledger');
+    await processUnanalyzedMentions(agent);
+
+    expect(WHIMSICAL_RESPONSES).toContain(repliedWith());
+    expect(bsky.getUserPosts).not.toHaveBeenCalled();
+    expect(db.createOrUpdateAnalysis).not.toHaveBeenCalled();
+    expect(db.markMentionAsDone).toHaveBeenCalledWith(
+      expect.objectContaining({ mentionId: 'mention' }),
+    );
   });
 
-  it('should have exactly 10 whimsical responses', () => {
-    expect(WHIMSICAL_RESPONSES).toHaveLength(10);
+  it('audits anyone else as normal, whatever their handle', async () => {
+    // The handle that used to be hardcoded, which is just another account to a fork
+    queue(makeMention('profanity.accountant'));
 
-    // Ensure all responses are unique
-    const uniqueResponses = new Set(WHIMSICAL_RESPONSES);
-    expect(uniqueResponses.size).toBe(10);
-  });
+    await processUnanalyzedMentions(agent);
 
-  it('should include original responses plus new nerdy accountant ones', () => {
-    // Check for some original responses
-    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('Nice try, buddy!'))).toBe(true);
-    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('perfect!'))).toBe(true);
-
-    // Check for new nerdy accountant responses
-    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('Error 404'))).toBe(true);
-    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('audit'))).toBe(true);
-    expect(WHIMSICAL_RESPONSES.some((r) => r.includes('ledger'))).toBe(true);
+    expect(repliedWith()).toBe('Squeaky clean!');
+    expect(bsky.getUserPosts).toHaveBeenCalledWith(agent, 'did:plc:profanity.accountant');
   });
 });

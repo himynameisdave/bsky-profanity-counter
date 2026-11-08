@@ -9,10 +9,6 @@ vi.mock(import('../../src/services/logger.js'), () => ({
   error: vi.fn<() => void>(),
 }));
 
-// The bluesky service throws at import time without credentials
-process.env.BLUESKY_IDENTIFIER ||= 'test.bot';
-process.env.BLUESKY_PASSWORD ||= 'test-password';
-
 const { getUserPosts, MAX_FEED_PAGE_ATTEMPTS, FEED_RETRY_BASE_DELAY_MS, FEED_PAGE_TIMEOUT_MS } =
   await import('../../src/services/bluesky.js');
 
