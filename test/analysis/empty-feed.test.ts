@@ -1,27 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { BskyAgent } from '@atproto/api';
-import type { Mention } from '@prisma/client';
+import type { AppBskyActorDefs, BskyAgent } from '@atproto/api';
+import type { Analysis, Mention } from '@prisma/client';
+import type * as Db from '../../src/services/database.js';
+import type * as Bsky from '../../src/services/bluesky.js';
 
 // Runs processUnanalyzedMentions with the real getUserPosts and the real
 // message, so the one year cutoff and the reply text are both covered
 
-vi.hoisted(() => {
-  // The bluesky service throws at import time without credentials
-  process.env.BLUESKY_IDENTIFIER ||= 'test.bot';
-  process.env.BLUESKY_PASSWORD ||= 'test-password';
-});
-
 const db = vi.hoisted(() => ({
-  getUnprocessedMentionsCount: vi.fn<() => Promise<number>>(),
-  getUnprocessedMention: vi.fn<() => Promise<unknown>>(),
-  findFreshAnalysis: vi.fn<() => Promise<unknown>>(),
-  createOrUpdateAnalysis: vi.fn<(data: Record<string, unknown>) => Promise<unknown>>(),
-  markMentionAsDone: vi.fn<(args: { mentionId: string }) => Promise<unknown>>(),
-  markMentionAsFailed: vi.fn<(mentionId: string) => Promise<unknown>>(),
+  getUnprocessedMentionsCount: vi.fn<typeof Db.getUnprocessedMentionsCount>(),
+  getUnprocessedMention: vi.fn<typeof Db.getUnprocessedMention>(),
+  findFreshAnalysis: vi.fn<typeof Db.findFreshAnalysis>(),
+  createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
+  markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
+  markMentionAsFailed: vi.fn<typeof Db.markMentionAsFailed>(),
 }));
 
 const bsky = vi.hoisted(() => ({
-  replyToPost: vi.fn<(agent: unknown, post: unknown, text: string) => Promise<unknown>>(),
+  replyToPost: vi.fn<typeof Bsky.replyToPost>(),
 }));
 
 vi.mock(import('../../src/services/database.js'), () => db);
@@ -33,11 +29,13 @@ vi.mock(import('../../src/services/logger.js'), () => ({
 }));
 vi.mock(import('../../src/services/bluesky.js'), async (importOriginal) => ({
   ...(await importOriginal()),
-  getProfile: vi.fn<(agent: unknown, handle: string) => Promise<{ did: string }>>(
-    async (_agent, handle) => ({ did: `did:plc:${handle}` }),
+  getProfile: vi.fn<typeof Bsky.getProfile>(
+    async (_agent, handle) =>
+      ({ did: `did:plc:${handle}` }) as AppBskyActorDefs.ProfileViewDetailed,
   ),
-  getPost: vi.fn<() => Promise<unknown>>(async () => ({
+  getPost: vi.fn<typeof Bsky.getPost>(async () => ({
     uri: 'at://did:plc:someone/app.bsky.feed.post/abc',
+    cid: 'bafy-abc',
   })),
   replyToPost: bsky.replyToPost,
 }));
@@ -81,13 +79,17 @@ describe('processUnanalyzedMentions for a target with no posts in the last year'
   beforeEach(() => {
     vi.clearAllMocks();
 
-    let stored: Record<string, unknown> | null = null;
+    let stored: Analysis | null = null;
     db.findFreshAnalysis.mockImplementation(async () => stored);
     db.createOrUpdateAnalysis.mockImplementation(async (data) => {
-      stored = { id: 'analysis', ...data };
+      const now = new Date();
+      stored = { id: 'analysis', ...data, lastAnalyzedAt: now, createdAt: now, updatedAt: now };
       return stored;
     });
-    bsky.replyToPost.mockResolvedValue({ uri: 'at://did:plc:bot/app.bsky.feed.post/reply' });
+    bsky.replyToPost.mockResolvedValue({
+      uri: 'at://did:plc:bot/app.bsky.feed.post/reply',
+      cid: 'bafy-reply',
+    });
   });
 
   it.each([
