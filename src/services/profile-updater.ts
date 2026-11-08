@@ -1,6 +1,7 @@
 import type { BskyAgent } from '@atproto/api';
 import { PrismaClient } from '@prisma/client';
 import * as logger from './logger.js';
+import { describeError } from '../errors.js';
 
 const prisma = new PrismaClient();
 
@@ -67,7 +68,7 @@ export async function updateProfileDescription(agent: BskyAgent): Promise<void> 
       `✅ Profile description updated with ${formatNumber(totalCount)} total profanities`,
     );
   } catch (error) {
-    logger.error(`❌ Error updating profile description: ${error}`);
+    logger.error(`❌ Error updating profile description: ${describeError(error)}`);
     throw error;
   }
 }

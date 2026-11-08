@@ -2,6 +2,7 @@ import type { BskyAgent } from '@atproto/api';
 import * as bsky from './services/bluesky.js';
 import * as db from './services/database.js';
 import * as logger from './services/logger.js';
+import { describeError } from './errors.js';
 import type { Notification } from './types.js';
 
 // Notification records are loosely typed, so narrow before reading the reply parent
@@ -40,7 +41,10 @@ function notificationToMention(notification: Notification) {
 
 /**
  * Resolve the handle of the author of the post a reply is pointing at.
- * Returns null when the parent post (or its author) can't be looked up.
+ *
+ * Returns null when there's no parent, or it's been deleted. Throws on any
+ * other error: falling back to the person who tagged us then would audit the
+ * wrong person, so it's better to leave the notification for the next run.
  */
 async function getParentAuthorHandle(
   agent: BskyAgent,
@@ -53,23 +57,18 @@ async function getParentAuthorHandle(
     return null;
   }
 
-  try {
-    // Get parent post details using the utility function
-    const parentPostResponse = await bsky.getPost(agent, parentUri);
+  const parentPost = await bsky.getPost(agent, parentUri);
 
-    if (!parentPostResponse) {
-      return null;
-    }
-
-    // Get the author's DID from the URI, then their profile
-    const [authorDid] = parentPostResponse.uri.split('/').slice(2);
-    const profileResponse = await bsky.getProfile(agent, authorDid);
-
-    return profileResponse.handle;
-  } catch {
-    // If we can't get the parent post, we'll keep the original mention author
+  if (!parentPost) {
+    logger.info(`🫥 The post ${notification.uri} replies to is gone, auditing its author instead`);
     return null;
   }
+
+  // Get the author's DID from the URI, then their profile
+  const [authorDid] = parentPost.uri.split('/').slice(2);
+  const profile = await bsky.getProfile(agent, authorDid);
+
+  return profile.handle;
 }
 
 /**
@@ -123,7 +122,7 @@ export default async function storeMentions(
     } catch (error) {
       // A single bad mention shouldn't stop the rest from being stored, but it
       // does stop the read cursor from moving past it
-      logger.error(`❌ Error storing mention ${mention.uri}\n\t- ${error}`);
+      logger.error(`❌ Error storing mention ${mention.uri}\n\t- ${describeError(error)}`);
 
       firstFailure ??= mention;
     }

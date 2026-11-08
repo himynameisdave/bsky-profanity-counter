@@ -5,6 +5,7 @@ import * as bsky from './services/bluesky.js';
 import * as profanity from './services/profanity.js';
 import * as logger from './services/logger.js';
 import { handleSelfTargeting } from './services/self-targeting.js';
+import { replyToMention } from './services/reply.js';
 import { describeError } from './errors.js';
 import type { ProfanityDetails } from './services/database.js';
 
@@ -90,43 +91,8 @@ async function processMention(agent: BskyAgent, mention: Mention) {
         freshAnalysis.totalPosts,
       );
 
-      // Get the mention post to reply to
-      const mentionPost = await bsky.getPost(agent, mention.postUrl);
-
-      if (mentionPost) {
-        // Reply to the mention with the analysis results
-        const posted = await bsky.replyToPost(agent, mentionPost, responseMessage);
-        const reply = posted as { uri?: string; cid?: string } | undefined;
-
-        // Extract the reply post ID and URL
-        const replyPostId = reply?.uri?.split('/').pop() || '';
-        const replyUrl = reply?.uri || '';
-
-        // Mark the mention as done
-        await db.markMentionAsDone({
-          mentionId: mention.id,
-          replyPostId,
-          replyUrl,
-          analysisId: freshAnalysis.id,
-        });
-
-        logger.success(`✅ Used cached analysis to reply to mention for ${mention.userHandle}`);
-      } else {
-        // The post no longer exists, so we can't reply to it
-        logger.warn(
-          `⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`,
-        );
-
-        // Still mark the mention as done, but without a reply
-        await db.markMentionAsDone({
-          mentionId: mention.id,
-          replyPostId: '',
-          replyUrl: '',
-          analysisId: freshAnalysis.id,
-        });
-
-        logger.info(`✅ Marked mention as processed (post unavailable) for ${mention.userHandle}`);
-      }
+      await replyToMention(agent, mention, responseMessage, freshAnalysis.id);
+      logger.success(`✅ Used cached analysis for mention for ${mention.userHandle}`);
     } else {
       // No fresh analysis, need to analyze post history
       logger.info(`🔍 No cached analysis found for ${mention.userHandle}, fetching posts...`);
@@ -159,45 +125,8 @@ async function processMention(agent: BskyAgent, mention: Mention) {
           posts.length,
         );
 
-        // Get the mention post to reply to
-        const mentionPost = await bsky.getPost(agent, mention.postUrl);
-
-        if (mentionPost) {
-          // Reply to the mention with the analysis results
-          const posted = await bsky.replyToPost(agent, mentionPost, responseMessage);
-          const reply = posted as { uri?: string; cid?: string } | undefined;
-
-          // Extract the reply post ID and URL
-          const replyPostId = reply?.uri?.split('/').pop() || '';
-          const replyUrl = reply?.uri || '';
-
-          // Mark the mention as done
-          await db.markMentionAsDone({
-            mentionId: mention.id,
-            replyPostId,
-            replyUrl,
-            analysisId: dbAnalysis.id,
-          });
-
-          logger.success(`✅ Analyzed and replied to mention for ${mention.userHandle}`);
-        } else {
-          // The post no longer exists, so we can't reply to it
-          logger.warn(
-            `⚠️ Could not find mention post to reply to (likely deleted): ${mention.postUrl}`,
-          );
-
-          // Still mark the mention as done, but without a reply
-          await db.markMentionAsDone({
-            mentionId: mention.id,
-            replyPostId: '',
-            replyUrl: '',
-            analysisId: dbAnalysis.id,
-          });
-
-          logger.info(
-            `✅ Marked mention as processed (post unavailable) for ${mention.userHandle}`,
-          );
-        }
+        await replyToMention(agent, mention, responseMessage, dbAnalysis.id);
+        logger.success(`✅ Analyzed posts for mention for ${mention.userHandle}`);
       } else {
         logger.warn(`⚠️ No posts found for ${mention.userHandle}`);
 

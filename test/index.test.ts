@@ -17,10 +17,12 @@ const bsky = vi.hoisted(() => ({
 
 vi.mock(import('../src/services/database.js'), () => db);
 vi.mock(import('../src/services/bluesky.js'), () => bsky);
-vi.mock(import('../src/mentions.js'), () => ({ default: vi.fn<() => Promise<void>>() }));
-vi.mock(import('../src/analysis.js'), () => ({
+const analysis = vi.hoisted(() => ({
   checkAndProcessMentions: vi.fn<() => Promise<void>>(),
 }));
+
+vi.mock(import('../src/mentions.js'), () => ({ default: vi.fn<() => Promise<void>>() }));
+vi.mock(import('../src/analysis.js'), () => analysis);
 vi.mock(import('../src/services/logger.js'), () => ({
   info: vi.fn<() => void>(),
   success: vi.fn<() => void>(),
@@ -61,6 +63,23 @@ describe('the entrypoint', () => {
     await import('../src/index.js');
 
     expect(db.disconnect).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledOnce();
+  });
+
+  it('still works through the queued mentions when fetching new ones fails', async () => {
+    bsky.getMentions.mockRejectedValue(new Error('Internal Server Error'));
+
+    await import('../src/index.js');
+
+    expect(analysis.checkAndProcessMentions).toHaveBeenCalledOnce();
+  });
+
+  it("doesn't try to process anything when it can't log in", async () => {
+    bsky.createAgent.mockRejectedValue(new Error('AuthenticationRequired'));
+
+    await import('../src/index.js');
+
+    expect(analysis.checkAndProcessMentions).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledOnce();
   });
 });

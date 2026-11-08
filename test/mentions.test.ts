@@ -108,4 +108,72 @@ describe(storeMentions, () => {
 
     expect(bsky.markNotificationsAsRead).not.toHaveBeenCalled();
   });
+
+  describe('when the mention is a reply', () => {
+    const PARENT_URI = 'at://did:plc:parent/app.bsky.feed.post/parent';
+
+    const makeReply = (id: string, indexedAt: string): Notification =>
+      ({
+        ...makeMention(id, indexedAt),
+        record: { reply: { parent: { uri: PARENT_URI }, root: { uri: PARENT_URI } } },
+      }) as unknown as Notification;
+
+    it("audits the parent post's author", async () => {
+      vi.mocked(bsky.getPost).mockResolvedValue({ uri: PARENT_URI, cid: 'bafy' } as any);
+      vi.mocked(bsky.getProfile).mockResolvedValue({ handle: 'parent.bsky.social' } as any);
+
+      await storeMentions(
+        agent,
+        [makeReply('1', '2026-01-01T00:00:00.000Z')],
+        '2026-01-01T00:00:00.000Z',
+      );
+
+      expect(bsky.getProfile).toHaveBeenCalledWith(agent, 'did:plc:parent');
+      expect(db.storeMention).toHaveBeenCalledWith(
+        expect.objectContaining({ userHandle: 'parent.bsky.social' }),
+      );
+    });
+
+    it('audits the person who tagged us when the parent post is gone', async () => {
+      vi.mocked(bsky.getPost).mockResolvedValue(null);
+
+      await storeMentions(
+        agent,
+        [makeReply('1', '2026-01-01T00:00:00.000Z')],
+        '2026-01-01T00:00:00.000Z',
+      );
+
+      expect(db.storeMention).toHaveBeenCalledWith(
+        expect.objectContaining({ userHandle: 'someone.bsky.social' }),
+      );
+    });
+
+    it.each([
+      [
+        'the parent post',
+        () => vi.mocked(bsky.getPost).mockRejectedValue(new Error('Internal Server Error')),
+      ],
+      [
+        "the parent author's profile",
+        () => {
+          vi.mocked(bsky.getPost).mockResolvedValue({ uri: PARENT_URI, cid: 'bafy' } as any);
+          vi.mocked(bsky.getProfile).mockRejectedValue(new Error('Internal Server Error'));
+        },
+      ],
+    ])(
+      'leaves it unread for next run, rather than auditing the wrong person, when looking up %s fails',
+      async (_step, fail) => {
+        fail();
+
+        await storeMentions(
+          agent,
+          [makeReply('1', '2026-01-01T00:00:00.000Z')],
+          '2026-01-01T06:00:00.000Z',
+        );
+
+        expect(db.storeMention).not.toHaveBeenCalled();
+        expect(bsky.markNotificationsAsRead).not.toHaveBeenCalled();
+      },
+    );
+  });
 });

@@ -24,6 +24,8 @@ if (!BLUESKY_IDENTIFIER || !BLUESKY_PASSWORD) {
 async function main() {
   logger.info('🤬 Starting profanity.accountant');
 
+  let agent: Awaited<ReturnType<typeof createAgent>>;
+
   try {
     // Reset any mentions that have been stuck in ANALYZING state for more than 20 minutes
     const resetCount = await db.resetStuckMentions(20);
@@ -32,10 +34,16 @@ async function main() {
     }
 
     // Create and authenticate the Bluesky agent
-    const agent = await createAgent();
+    agent = await createAgent();
 
     logger.info(`🤖 Bot authenticated as: ${BLUESKY_IDENTIFIER} (${BOT_DID})`);
+  } catch (error) {
+    logger.error(`❌ Error starting the bot:\n\t- ${describeError(error)}`);
+    return;
+  }
 
+  // Fetching new mentions failing mustn't stop us answering the ones already queued
+  try {
     // STEP 1: Get recent mentions and store them in the database
     logger.info('🗣️ Getting unread mentions from Bluesky...');
     const { mentions, latestIndexedAt } = await getMentions(agent);
@@ -49,12 +57,14 @@ async function main() {
     //  First thing we do is store the mentions in the database, then move the
     //  read cursor up to the batch we just fetched
     await storeMentions(agent, mentions, latestIndexedAt);
-
-    // Now we check for unanalyzed mentions and process them
-    await checkAndProcessMentions(agent);
   } catch (error) {
-    logger.error(`❌ Error running the bot:\n\t- ${describeError(error)}`);
+    logger.error(
+      `❌ Error getting new mentions, still working through the queue:\n\t- ${describeError(error)}`,
+    );
   }
+
+  // Now we check for unanalyzed mentions and process them
+  await checkAndProcessMentions(agent);
 }
 
 try {
