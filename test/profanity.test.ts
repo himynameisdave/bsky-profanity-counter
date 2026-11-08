@@ -181,5 +181,20 @@ describe('Profanity Service', () => {
       expect(message).not.toContain('🥈');
       expect(message).not.toContain('🥉');
     });
+
+    it("doesn't call someone a good citizen when there were no posts to check", () => {
+      const analysis: ProfanityAnalysis = {
+        totalCount: 0,
+        wordCounts: {},
+        topThree: [],
+        postCount: 0,
+      };
+
+      const message = generateResponseMessage(analysis, 'quiet.bsky.social', 0);
+
+      expect(message).toBe(
+        'No original posts found for @quiet.bsky.social in the last year to analyze.',
+      );
+    });
   });
 });
