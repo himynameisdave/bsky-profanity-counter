@@ -1,28 +1,35 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { MockInstance } from 'vitest';
+import type { BskyAgent } from '@atproto/api';
+import type * as Db from '../src/services/database.js';
+import type * as Bsky from '../src/services/bluesky.js';
+import type * as Analysis from '../src/analysis.js';
+import type * as Config from '../src/config.js';
 
-vi.hoisted(() => {
-  // The entrypoint refuses to start without credentials
-  process.env.BLUESKY_IDENTIFIER ||= 'test.bot';
-  process.env.BLUESKY_PASSWORD ||= 'test-password';
-});
+const ENV = { bluesky: { identifier: 'test.bot', password: 'test-password' } };
 
 const db = vi.hoisted(() => ({
-  resetStuckMentions: vi.fn<() => Promise<number>>(),
-  disconnect: vi.fn<() => Promise<void>>(),
+  resetStuckMentions: vi.fn<typeof Db.resetStuckMentions>(),
+  disconnect: vi.fn<typeof Db.disconnect>(),
 }));
 const bsky = vi.hoisted(() => ({
-  createAgent: vi.fn<() => Promise<unknown>>(),
-  getMentions: vi.fn<() => Promise<unknown>>(),
+  createAgent: vi.fn<typeof Bsky.createAgent>(),
+  getMentions: vi.fn<typeof Bsky.getMentions>(),
 }));
+const analysis = vi.hoisted(() => ({
+  checkAndProcessMentions: vi.fn<typeof Analysis.checkAndProcessMentions>(),
+}));
+const loadEnv = vi.hoisted(() => vi.fn<typeof Config.loadEnv>());
 
 vi.mock(import('../src/services/database.js'), () => db);
 vi.mock(import('../src/services/bluesky.js'), () => bsky);
-const analysis = vi.hoisted(() => ({
-  checkAndProcessMentions: vi.fn<() => Promise<void>>(),
-}));
-
 vi.mock(import('../src/mentions.js'), () => ({ default: vi.fn<() => Promise<void>>() }));
 vi.mock(import('../src/analysis.js'), () => analysis);
+// Keep the real limits, but not the real environment or `.env`
+vi.mock(import('../src/config.js'), async (importOriginal) => ({
+  ...(await importOriginal()),
+  loadEnv,
+}));
 vi.mock(import('../src/services/logger.js'), () => ({
   info: vi.fn<() => void>(),
   success: vi.fn<() => void>(),
@@ -31,16 +38,17 @@ vi.mock(import('../src/services/logger.js'), () => ({
 }));
 
 describe('the entrypoint', () => {
-  let exit: ReturnType<typeof vi.spyOn>;
+  let exit: MockInstance<typeof process.exit>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
     exit = vi.spyOn(process, 'exit').mockReturnValue(undefined as never);
 
+    loadEnv.mockReturnValue(ENV);
     db.resetStuckMentions.mockResolvedValue(0);
     db.disconnect.mockResolvedValue();
-    bsky.createAgent.mockResolvedValue({});
+    bsky.createAgent.mockResolvedValue({} as BskyAgent);
     bsky.getMentions.mockResolvedValue({ mentions: [], latestIndexedAt: null });
   });
 
@@ -81,5 +89,22 @@ describe('the entrypoint', () => {
 
     expect(analysis.checkAndProcessMentions).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledOnce();
+  });
+
+  it('logs in with the credentials from the environment', async () => {
+    await import('../src/index.js');
+
+    expect(bsky.createAgent).toHaveBeenCalledExactlyOnceWith(ENV.bluesky);
+  });
+
+  it('fails before touching the database or Bluesky when a variable is missing', async () => {
+    loadEnv.mockImplementation(() => {
+      throw new Error('🕵️ Missing environment variables: DATABASE_URL');
+    });
+
+    await expect(import('../src/index.js')).rejects.toThrow('DATABASE_URL');
+
+    expect(db.resetStuckMentions).not.toHaveBeenCalled();
+    expect(bsky.createAgent).not.toHaveBeenCalled();
   });
 });

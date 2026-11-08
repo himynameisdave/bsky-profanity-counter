@@ -1,25 +1,13 @@
-import dotenv from 'dotenv';
 import { createAgent, getMentions } from './services/bluesky.js';
 import * as logger from './services/logger.js';
 import * as db from './services/database.js';
 import storeMentions from './mentions.js';
 import { checkAndProcessMentions } from './analysis.js';
 import { describeError } from './errors.js';
+import { STUCK_MENTION_TIMEOUT_MINUTES, loadEnv } from './config.js';
 
-// Load environment variables
-dotenv.config();
-
-// Environment variables
-const BLUESKY_IDENTIFIER = process.env.BLUESKY_IDENTIFIER || '';
-const BLUESKY_PASSWORD = process.env.BLUESKY_PASSWORD || '';
-
-// Hardcoded bot DID for self-mention detection (no need to fetch it each time)
-const BOT_DID = 'did:plc:zq2louqgczh23wrrduwwbvbn';
-
-if (!BLUESKY_IDENTIFIER || !BLUESKY_PASSWORD) {
-  logger.error('🕵️ Missing Bluesky credentials in environment variables');
-  throw new Error('🕵️ Missing Bluesky credentials in environment variables');
-}
+// Throws before anything else happens if a variable is missing, so the run fails loudly
+const env = loadEnv();
 
 async function main() {
   logger.info('🤬 Starting profanity.accountant');
@@ -27,16 +15,14 @@ async function main() {
   let agent: Awaited<ReturnType<typeof createAgent>>;
 
   try {
-    // Reset any mentions that have been stuck in ANALYZING state for more than 20 minutes
-    const resetCount = await db.resetStuckMentions(20);
+    // Put mentions left ANALYZING by a failed attempt or a dead run back in the queue
+    const resetCount = await db.resetStuckMentions(STUCK_MENTION_TIMEOUT_MINUTES);
     if (resetCount > 0) {
       logger.info(`🔄 Reset ${resetCount} mentions that were stuck in ANALYZING state`);
     }
 
     // Create and authenticate the Bluesky agent
-    agent = await createAgent();
-
-    logger.info(`🤖 Bot authenticated as: ${BLUESKY_IDENTIFIER} (${BOT_DID})`);
+    agent = await createAgent(env.bluesky);
   } catch (error) {
     logger.error(`❌ Error starting the bot:\n\t- ${describeError(error)}`);
     return;

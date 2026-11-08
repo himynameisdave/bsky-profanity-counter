@@ -1,17 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Mock } from 'vitest';
 import type { BskyAgent } from '@atproto/api';
 import type { Mention } from '@prisma/client';
 import * as bsky from '../src/services/bluesky.js';
+import type * as Db from '../src/services/database.js';
 import { handleSelfTargeting } from '../src/services/self-targeting.js';
 
 vi.mock(import('../src/services/database.js'), () => ({
-  markMentionAsDone: vi.fn<() => void>(),
+  markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
 }));
 
 vi.mock(import('../src/services/bluesky.js'), () => ({
-  getPost: vi.fn<() => void>(),
-  replyToPost: vi.fn<() => void>(),
+  getPost: vi.fn<typeof bsky.getPost>(),
+  replyToPost: vi.fn<typeof bsky.replyToPost>(),
 }));
 
 vi.mock(import('../src/services/logger.js'), () => ({
@@ -22,8 +22,8 @@ vi.mock(import('../src/services/logger.js'), () => ({
 }));
 
 // The mocked module hands back plain mock functions
-const getPostMock = bsky.getPost as unknown as Mock;
-const replyToPostMock = bsky.replyToPost as unknown as Mock;
+const getPostMock = vi.mocked(bsky.getPost);
+const replyToPostMock = vi.mocked(bsky.replyToPost);
 
 // A mention of the bot which lives partway down someone else's thread
 const MENTION_POST = {
