@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { BskyAgent } from '@atproto/api';
+import { XRPCError, type BskyAgent } from '@atproto/api';
 import { describeError } from '../../src/errors.js';
 
 vi.mock(import('../../src/services/logger.js'), () => ({
@@ -9,8 +9,13 @@ vi.mock(import('../../src/services/logger.js'), () => ({
   error: vi.fn<() => void>(),
 }));
 
-const { getUserPosts, MAX_FEED_PAGE_ATTEMPTS, FEED_RETRY_BASE_DELAY_MS, FEED_PAGE_TIMEOUT_MS } =
-  await import('../../src/services/bluesky.js');
+const {
+  getUserPosts,
+  MAX_FEED_PAGE_ATTEMPTS,
+  FEED_RETRY_BASE_DELAY_MS,
+  FEED_PAGE_TIMEOUT_MS,
+  MAX_RATE_LIMIT_WAIT_MS,
+} = await import('../../src/services/bluesky.js');
 
 const DID = 'did:plc:someone';
 
@@ -86,6 +91,17 @@ const settle = async <T>(promise: Promise<T>) => {
   await vi.runAllTimersAsync();
   return outcome;
 };
+
+const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+
+// A post Bluesky saw `minutes` ago
+const postFrom = (id: string, minutes: number) => ({
+  post: {
+    uri: `at://${DID}/app.bsky.feed.post/${id}`,
+    indexedAt: minutesAgo(minutes),
+    record: { createdAt: minutesAgo(minutes) },
+  },
+});
 
 describe(getUserPosts, () => {
   beforeEach(() => {
@@ -238,5 +254,59 @@ describe(getUserPosts, () => {
 
     expect((error as Error).message).toMatch(/Gave up fetching posts chunk #1/u);
     expect(getAuthorFeed).toHaveBeenCalledTimes(MAX_FEED_PAGE_ATTEMPTS);
+  });
+
+  it('waits for a rate limit to reset before retrying, then gives up if it never lifts', async () => {
+    const resetInMs = 10_000;
+    const { agent, getAuthorFeed } = makeAgent(async () => {
+      throw new XRPCError(429, 'RateLimitExceeded', 'Rate Limit Exceeded', {
+        'ratelimit-reset': String((Date.now() + resetInMs) / 1000),
+      });
+    });
+
+    const outcome = capture(getUserPosts(agent, DID));
+
+    await vi.advanceTimersByTimeAsync(resetInMs - 1);
+    expect(getAuthorFeed).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(getAuthorFeed).toHaveBeenCalledTimes(2);
+
+    await vi.runAllTimersAsync();
+    const { error } = await outcome;
+    expect((error as Error).message).toMatch(/Gave up fetching posts chunk #1/u);
+    expect(getAuthorFeed).toHaveBeenCalledTimes(MAX_FEED_PAGE_ATTEMPTS);
+  });
+
+  it("doesn't wait longer than the cap for a rate limit that resets far in the future", async () => {
+    const { agent, getAuthorFeed } = makeAgent(async () => {
+      throw new XRPCError(429, 'RateLimitExceeded', 'Rate Limit Exceeded', {
+        'ratelimit-reset': String((Date.now() + 60 * 60 * 1000) / 1000),
+      });
+    });
+
+    const outcome = capture(getUserPosts(agent, DID));
+
+    await vi.advanceTimersByTimeAsync(MAX_RATE_LIMIT_WAIT_MS);
+    expect(getAuthorFeed).toHaveBeenCalledTimes(2);
+
+    await vi.runAllTimersAsync();
+    await outcome;
+  });
+
+  it('only gets the posts since the given one, stopping at the first page that has it', async () => {
+    const { agent, getAuthorFeed } = makeAgent(async () => ({
+      data: {
+        feed: [postFrom('new', 1), postFrom('newer-than-last', 5), postFrom('seen', 10)],
+        cursor: 'more',
+      },
+    }));
+
+    const { value: posts } = await settle(getUserPosts(agent, DID, minutesAgo(10)));
+
+    expect(posts?.map((p) => p.uri)).toStrictEqual([
+      `at://${DID}/app.bsky.feed.post/new`,
+      `at://${DID}/app.bsky.feed.post/newer-than-last`,
+    ]);
+    expect(getAuthorFeed).toHaveBeenCalledOnce();
   });
 });

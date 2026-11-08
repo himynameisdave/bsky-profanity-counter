@@ -74,24 +74,70 @@ export const analyzeProfanity = (text: string): Record<string, number> => {
   return wordCounts;
 };
 
-// Analyze a collection of posts for profanities
-export const analyzePosts = (posts: AppBskyFeedDefs.PostView[]): ProfanityAnalysis => {
-  const totalWordCounts: Record<string, number> = {};
+// What we counted on one day (UTC)
+export type DayCounts = { posts: number; wordCounts: Record<string, number> };
 
-  // Process each post
+// Counts per day, keyed `YYYY-MM-DD`. Keeping them by day is what lets a
+// re-analysis add just the new posts: days older than a year are dropped as
+// they fall out of the window, instead of refetching the whole year.
+export type DailyCounts = Record<string, DayCounts>;
+
+const addWordCounts = (into: Record<string, number>, from: Record<string, number>) => {
+  for (const [word, count] of Object.entries(from)) {
+    into[word] = (into[word] ?? 0) + count;
+  }
+};
+
+// The day a post was written, falling back to when Bluesky saw it
+const getDayKey = (post: AppBskyFeedDefs.PostView): string => {
+  // The record property is loosely typed, so narrow it before reading `createdAt`
+  const record = post.record as { createdAt?: unknown } | undefined;
+  const createdAt =
+    typeof record?.createdAt === 'string' ? Date.parse(record.createdAt) : Number.NaN;
+  return new Date(Number.isNaN(createdAt) ? post.indexedAt : createdAt).toISOString().slice(0, 10);
+};
+
+/**
+ * Counts profanity in `posts`, adds it to the `earlier` counts from a previous
+ * analysis (if any), and drops days from more than a year ago.
+ *
+ * `posts` mustn't include any already in `earlier`, or they're counted twice.
+ */
+export const analyzePosts = (
+  posts: AppBskyFeedDefs.PostView[],
+  earlier: DailyCounts = {},
+): ProfanityAnalysis & { days: DailyCounts } => {
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  const cutoff = oneYearAgo.toISOString().slice(0, 10);
+
+  // Copied, so the counts we were given aren't changed
+  const days: DailyCounts = {};
+  for (const [day, counts] of Object.entries(earlier)) {
+    if (day >= cutoff) {
+      days[day] = { posts: counts.posts, wordCounts: { ...counts.wordCounts } };
+    }
+  }
+
   for (const post of posts) {
-    // The record property is loosely typed, so narrow it before reading `text`
-    const record = post.record as { text?: unknown } | undefined;
-    const text = typeof record?.text === 'string' ? record.text : '';
+    const day = getDayKey(post);
+    if (day >= cutoff) {
+      days[day] ??= { posts: 0, wordCounts: {} };
+      days[day].posts++;
 
-    if (text) {
-      const postCounts = analyzeProfanity(text);
-
-      // Add counts to the total
-      for (const [word, count] of Object.entries(postCounts)) {
-        totalWordCounts[word] = (totalWordCounts[word] || 0) + count;
+      // The record property is loosely typed, so narrow it before reading `text`
+      const record = post.record as { text?: unknown } | undefined;
+      if (typeof record?.text === 'string' && record.text) {
+        addWordCounts(days[day].wordCounts, analyzeProfanity(record.text));
       }
     }
+  }
+
+  const totalWordCounts: Record<string, number> = {};
+  let postCount = 0;
+  for (const counts of Object.values(days)) {
+    postCount += counts.posts;
+    addWordCounts(totalWordCounts, counts.wordCounts);
   }
 
   // Calculate total count
@@ -113,7 +159,8 @@ export const analyzePosts = (posts: AppBskyFeedDefs.PostView[]): ProfanityAnalys
     totalCount,
     wordCounts: totalWordCounts,
     topThree,
-    postCount: posts.length, // Add the number of posts that were analyzed
+    postCount,
+    days,
   };
 };
 

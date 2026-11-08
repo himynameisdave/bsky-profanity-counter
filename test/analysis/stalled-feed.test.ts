@@ -10,7 +10,7 @@ import type * as Bsky from '../../src/services/bluesky.js';
 const db = vi.hoisted(() => ({
   getUnprocessedMentionsCount: vi.fn<typeof Db.getUnprocessedMentionsCount>(),
   getUnprocessedMention: vi.fn<typeof Db.getUnprocessedMention>(),
-  findFreshAnalysis: vi.fn<typeof Db.findFreshAnalysis>(),
+  findAnalysis: vi.fn<typeof Db.findAnalysis>(),
   createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
   markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
   markMentionAsFailed: vi.fn<typeof Db.markMentionAsFailed>(),
@@ -64,7 +64,7 @@ describe('processUnanalyzedMentions with a feed request that stalls', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    db.findFreshAnalysis.mockResolvedValue(null);
+    db.findAnalysis.mockResolvedValue(null);
     db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' } as Analysis);
   });
 

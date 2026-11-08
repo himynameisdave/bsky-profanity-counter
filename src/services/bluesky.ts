@@ -255,11 +255,31 @@ const FEED_PAGE_SIZE = 100;
 export const MAX_FEED_PAGE_ATTEMPTS = 3;
 // Wait before the first retry, doubled for each retry after that
 export const FEED_RETRY_BASE_DELAY_MS = 1000;
+// When we're rate limited, we wait until the limit resets, but never longer than this
+export const MAX_RATE_LIMIT_WAIT_MS = 30_000;
 // How long one attempt at a page may take before we abort it. Pages normally
 // come back in well under a second. Even when every attempt times out, giving
-// up on a page takes 3 × 15s plus 3s of backoff, about 48s, well inside the
-// workflow's 15 minute timeout, so the failure is handled before the job is killed.
+// up on a page takes 3 × 15s plus 3s of backoff, about 48s (or about 2 minutes
+// if we're also waiting out a rate limit), well inside the workflow's 15 minute
+// timeout, so the failure is handled before the job is killed.
 export const FEED_PAGE_TIMEOUT_MS = 15_000;
+
+/**
+ * How long to wait before retrying a page. Normally exponential backoff, but a
+ * 429 tells us when the rate limit resets (`ratelimit-reset`, in seconds since
+ * the epoch), and retrying before then just gets another 429.
+ */
+const getRetryDelay = (error: unknown, attempt: number): number => {
+  const backoff = FEED_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+  if (!(error instanceof XRPCError) || error.status !== 429) {
+    return backoff;
+  }
+
+  const untilReset = Number(error.headers?.['ratelimit-reset']) * 1000 - Date.now();
+  return Number.isFinite(untilReset)
+    ? Math.min(Math.max(backoff, untilReset), MAX_RATE_LIMIT_WAIT_MS)
+    : backoff;
+};
 
 /**
  * Fetches one page of an author feed, retrying with backoff if it fails.
@@ -294,7 +314,7 @@ const getAuthorFeedPage = async (
 
       if (attempt < MAX_FEED_PAGE_ATTEMPTS) {
         // oxlint-disable-next-line no-await-in-loop
-        await sleep(FEED_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+        await sleep(getRetryDelay(error, attempt));
       }
     }
   }
@@ -306,23 +326,34 @@ const getAuthorFeedPage = async (
 };
 
 /**
- * Gets a user's posts from the last year, up to MAX_POSTS.
+ * Gets a user's posts from the last year, newest first, up to MAX_POSTS.
  * Throws if a page of their feed can't be fetched (see getAuthorFeedPage).
+ *
+ * Pass `since` (the `indexedAt` of the newest post we've already counted) to
+ * only get the posts after it. The feed is newest first, so we stop paging at
+ * the first post we've seen, which is usually on the first page.
  */
 export const getUserPosts = async (
   agent: BskyAgent,
   did: string,
+  since?: string,
 ): Promise<AppBskyFeedDefs.PostView[]> => {
   const allPosts: AppBskyFeedDefs.PostView[] = [];
   let cursor: string | undefined;
   const ONE_YEAR_AGO = new Date();
   ONE_YEAR_AGO.setFullYear(ONE_YEAR_AGO.getFullYear() - 1);
+  const sinceTime = since === undefined ? undefined : Date.parse(since);
 
-  logger.info(`🔍 Getting posts for ${did} (up to ${MAX_POSTS} posts from the last year)...`);
+  logger.info(
+    since
+      ? `🔍 Getting posts for ${did} since ${since}...`
+      : `🔍 Getting posts for ${did} (up to ${MAX_POSTS} posts from the last year)...`,
+  );
 
   let chunkCount = 0;
   let oldestPostDate = new Date();
   let reachedYearOld = false;
+  let reachedSeen = false;
 
   // Fetch posts in batches until we hit the max, reach a year old posts, or there are no more
   while (allPosts.length < MAX_POSTS && !reachedYearOld) {
@@ -332,7 +363,7 @@ export const getUserPosts = async (
     // oxlint-disable-next-line no-await-in-loop
     const response = await getAuthorFeedPage(agent, did, cursor, chunkCount);
 
-    const posts = response.data.feed.reduce((acc, item) => {
+    let posts = response.data.feed.reduce((acc, item) => {
       // Only include items that are not reposts
       if (!item.reason) {
         acc.push(item.post);
@@ -350,6 +381,14 @@ export const getUserPosts = async (
       }
       logger.info(`🔍 No more posts found after ${allPosts.length} total posts`);
       break;
+    }
+
+    if (sinceTime !== undefined) {
+      const unseen = posts.filter((post) => Date.parse(post.indexedAt) > sinceTime);
+      if (unseen.length < posts.length) {
+        reachedSeen = true;
+        posts = unseen;
+      }
     }
 
     // Check the date of the last post in this chunk
@@ -383,6 +422,11 @@ export const getUserPosts = async (
     logger.info(
       `✅ Processed chunk #${chunkCount}: Added ${posts.length} posts (total: ${allPosts.length})`,
     );
+
+    if (reachedSeen) {
+      logger.info(`🔍 Reached posts we've already counted`);
+      break;
+    }
 
     // Break if no cursor for next page
     if (!response.data.cursor) {

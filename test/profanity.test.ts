@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   analyzePosts,
   analyzeProfanity,
@@ -23,6 +23,16 @@ const createMockPost = (text: string): AppBskyFeedDefs.PostView =>
     },
     indexedAt: new Date().toISOString(),
     viewer: {},
+  }) as AppBskyFeedDefs.PostView;
+
+// A post written at noon UTC on `day`
+const postOn = (day: string, text: string) =>
+  ({
+    uri: `at://fake/${day}`,
+    cid: 'fake-cid',
+    author: { did: 'did:fake', handle: 'test.bsky.social' },
+    indexedAt: `${day}T12:00:00.000Z`,
+    record: { text, createdAt: `${day}T12:00:00.000Z` },
   }) as AppBskyFeedDefs.PostView;
 
 describe('Profanity Service', () => {
@@ -55,6 +65,53 @@ describe('Profanity Service', () => {
 
       // "shit" appears twice, putting it third
       expect(result.topThree[2].word).toBe('shit');
+    });
+
+    describe('adding to earlier counts', () => {
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('adds new posts to the earlier days, without changing them', () => {
+        vi.useFakeTimers({ now: new Date('2026-07-15T00:00:00Z') });
+        const earlier = { '2026-07-01': { posts: 2, wordCounts: { shit: 1 } } };
+
+        const result = analyzePosts(
+          [postOn('2026-07-01', 'oh shit'), postOn('2026-07-14', 'damn')],
+          earlier,
+        );
+
+        expect(result.postCount).toBe(4);
+        expect(result.wordCounts).toStrictEqual({ shit: 2, damn: 1 });
+        expect(result.days).toStrictEqual({
+          '2026-07-01': { posts: 3, wordCounts: { shit: 2 } },
+          '2026-07-14': { posts: 1, wordCounts: { damn: 1 } },
+        });
+        expect(earlier).toStrictEqual({ '2026-07-01': { posts: 2, wordCounts: { shit: 1 } } });
+      });
+
+      it('drops days as they fall out of the one year window', () => {
+        vi.useFakeTimers({ now: new Date('2026-07-15T08:00:00Z') });
+        const earlier = analyzePosts([
+          postOn('2025-07-15', 'shit'),
+          postOn('2025-08-01', 'damn'),
+          postOn('2026-01-01', 'hell'),
+        ]).days;
+
+        expect(analyzePosts([], earlier).wordCounts).toStrictEqual({
+          shit: 1,
+          damn: 1,
+          hell: 1,
+        });
+
+        vi.setSystemTime(new Date('2026-07-16T08:00:00Z'));
+        const result = analyzePosts([], earlier);
+        expect(result.postCount).toBe(2);
+        expect(result.wordCounts).toStrictEqual({ damn: 1, hell: 1 });
+
+        vi.setSystemTime(new Date('2027-01-01T08:00:00Z'));
+        expect(analyzePosts([], earlier).wordCounts).toStrictEqual({ hell: 1 });
+      });
     });
 
     it('should handle posts with no profanity', () => {

@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { ANALYSIS_CACHE_TTL_MS } from '../config.js';
+import type { DailyCounts } from './profanity.js';
 
 // Type for profanity details stored in JSON
 export type ProfanityDetails = {
@@ -7,6 +7,17 @@ export type ProfanityDetails = {
   wordCounts: Record<string, number>;
   // Array of top profanities with counts, sorted descending
   topProfanities: { word: string; count: number }[];
+  // What a re-analysis needs to only count the posts since this one. Analyses
+  // saved before these were added don't have them, so they get a full recount.
+
+  // The account we counted, in case the handle has moved to someone else since
+  did?: string;
+  // The counts the totals above add up from
+  days?: DailyCounts;
+  // The `indexedAt` of the newest post we counted
+  newestIndexedAt?: string;
+  // When we last counted their whole year, rather than just their new posts
+  fullCountAt?: string;
 };
 
 // The one Prisma client for the whole app. Everything that touches the database
@@ -132,17 +143,10 @@ export async function markMentionAsFailed(mentionId: string) {
 }
 
 /**
- * Find an analysis of a user that's fresh enough to reuse (see ANALYSIS_CACHE_TTL_MS)
+ * Find the analysis of a user, however old it is
  */
-export async function findFreshAnalysis(userHandle: string) {
-  return prisma.analysis.findFirst({
-    where: {
-      userHandle,
-      lastAnalyzedAt: {
-        gte: new Date(Date.now() - ANALYSIS_CACHE_TTL_MS),
-      },
-    },
-  });
+export async function findAnalysis(userHandle: string) {
+  return prisma.analysis.findUnique({ where: { userHandle } });
 }
 
 /**
