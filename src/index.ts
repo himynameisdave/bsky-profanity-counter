@@ -5,6 +5,7 @@ import storeMentions from './mentions.js';
 import { checkAndProcessMentions } from './analysis.js';
 import { describeError } from './errors.js';
 import { STUCK_MENTION_TIMEOUT_MINUTES, loadEnv } from './config.js';
+import { stats, hasFailed, writeSummary } from './run-stats.js';
 
 // Throws before anything else happens if a variable is missing, so the run fails loudly
 const env = loadEnv();
@@ -25,6 +26,7 @@ async function main() {
     agent = await createAgent(env.bluesky);
   } catch (error) {
     logger.error(`❌ Error starting the bot:\n\t- ${describeError(error)}`);
+    stats.errors++;
     return;
   }
 
@@ -33,6 +35,7 @@ async function main() {
     // STEP 1: Get recent mentions and store them in the database
     logger.info('🗣️ Getting unread mentions from Bluesky...');
     const { mentions, latestIndexedAt } = await getMentions(agent);
+    stats.fetched = mentions.length;
 
     if (mentions.length > 0) {
       logger.info(`✅ Found ${mentions.length} unread mentions to process`);
@@ -47,6 +50,7 @@ async function main() {
     logger.error(
       `❌ Error getting new mentions, still working through the queue:\n\t- ${describeError(error)}`,
     );
+    stats.errors++;
   }
 
   // Now we check for unanalyzed mentions and process them
@@ -55,8 +59,14 @@ async function main() {
 
 try {
   await main();
+} catch (error) {
+  logger.error(`❌ The run crashed:\n\t- ${describeError(error)}`);
+  stats.errors++;
 } finally {
   await db.disconnect();
+  writeSummary();
+  // Any failure turns the job red, so a broken bot doesn't hide behind green checkmarks
+  process.exitCode = hasFailed() ? 1 : 0;
   // Exit as soon as the run is done, not whenever the event loop drains. A feed
   // request we gave up on can stay open even after it's aborted (see withTimeout
   // in services/bluesky.ts), and it would keep this process alive, its work

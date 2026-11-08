@@ -3,6 +3,7 @@ import * as bsky from './services/bluesky.js';
 import * as db from './services/database.js';
 import * as logger from './services/logger.js';
 import { describeError } from './errors.js';
+import { stats } from './run-stats.js';
 import type { Notification } from './types.js';
 
 // Notification records are loosely typed, so narrow before reading the reply parent
@@ -115,6 +116,7 @@ export default async function storeMentions(
       // Store in database (an upsert, so replaying a notification is a no-op)
       // oxlint-disable-next-line no-await-in-loop
       await db.storeMention(mentionData);
+      stats.stored++;
 
       if (!firstFailure) {
         lastStoredIndexedAt = mention.indexedAt;
@@ -123,6 +125,7 @@ export default async function storeMentions(
       // A single bad mention shouldn't stop the rest from being stored, but it
       // does stop the read cursor from moving past it
       logger.error(`❌ Error storing mention ${mention.uri}\n\t- ${describeError(error)}`);
+      stats.failed++;
 
       firstFailure ??= mention;
     }

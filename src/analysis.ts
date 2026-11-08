@@ -7,6 +7,7 @@ import * as logger from './services/logger.js';
 import { handleSelfTargeting } from './services/self-targeting.js';
 import { replyToMention } from './services/reply.js';
 import { describeError } from './errors.js';
+import { stats } from './run-stats.js';
 import type { ProfanityDetails } from './services/database.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -42,12 +43,14 @@ function hasExhaustedRetries(mention: Mention): boolean {
 async function giveUpOnMention(mention: Mention) {
   try {
     await db.markMentionAsFailed(mention.id);
+    stats.gaveUp++;
     logger.warn(
       `🪦 Giving up on mention ${mention.id} for ${mention.userHandle}: ${mention.attempts - 1} attempts have failed since ${mention.firstAttemptedAt?.toISOString()}`,
     );
   } catch (error) {
     // Not being able to record the failure mustn't stop the rest of the queue
     logger.error(`❌ Could not mark mention ${mention.id} as failed: ${describeError(error)}`);
+    stats.failed++;
   }
 }
 
@@ -64,6 +67,7 @@ async function processMention(agent: BskyAgent, mention: Mention) {
     // session, so this holds whatever account the bot is running as
     if (mention.userHandle === agent.session?.handle) {
       await handleSelfTargeting(agent, mention);
+      stats.answered++;
       return; // Exit early, don't do profanity analysis
     }
 
@@ -92,6 +96,7 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       );
 
       await replyToMention(agent, mention, responseMessage, freshAnalysis.id);
+      stats.answered++;
       logger.success(`✅ Used cached analysis for mention for ${mention.userHandle}`);
     } else {
       // No fresh analysis, need to analyze post history
@@ -126,6 +131,7 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       );
 
       await replyToMention(agent, mention, responseMessage, dbAnalysis.id);
+      stats.answered++;
       logger.success(`✅ Analyzed ${posts.length} posts for mention for ${mention.userHandle}`);
     }
   } catch (error) {
@@ -135,6 +141,7 @@ async function processMention(agent: BskyAgent, mention: Mention) {
     logger.error(
       `❌ Attempt ${mention.attempts} at mention ${mention.id} for ${mention.userHandle} failed, leaving it for a later run: ${describeError(error)}`,
     );
+    stats.failed++;
   }
 }
 
@@ -184,5 +191,6 @@ export async function checkAndProcessMentions(agent: BskyAgent): Promise<void> {
     logger.success('✅ Completed processing of unanalyzed mentions');
   } catch (error) {
     logger.error(`❌ Error checking and processing mentions: ${describeError(error)}`);
+    stats.errors++;
   }
 }
