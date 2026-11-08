@@ -103,42 +103,30 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       // Get the user's posts
       const posts = await bsky.getUserPosts(agent, profile.did);
 
-      if (posts.length > 0) {
-        // Analyze the posts for profanity
-        const analysis = profanity.analyzePosts(posts);
+      // Saved and answered even with no posts, so a quiet account still gets a
+      // reply, and a repeat request is served from the cache
+      const analysis = profanity.analyzePosts(posts);
 
-        // Store the analysis in the database
-        const dbAnalysis = await db.createOrUpdateAnalysis({
-          userHandle: mention.userHandle,
-          totalPosts: posts.length,
-          profanityCount: analysis.totalCount,
-          profanityDetails: {
-            wordCounts: analysis.wordCounts,
-            topProfanities: analysis.topThree.map((p) => ({ word: p.word, count: p.count })),
-          },
-        });
+      // Store the analysis in the database
+      const dbAnalysis = await db.createOrUpdateAnalysis({
+        userHandle: mention.userHandle,
+        totalPosts: posts.length,
+        profanityCount: analysis.totalCount,
+        profanityDetails: {
+          wordCounts: analysis.wordCounts,
+          topProfanities: analysis.topThree.map((p) => ({ word: p.word, count: p.count })),
+        },
+      });
 
-        // Generate the response message
-        const responseMessage = profanity.generateResponseMessage(
-          analysis,
-          mention.userHandle,
-          posts.length,
-        );
+      // Generate the response message
+      const responseMessage = profanity.generateResponseMessage(
+        analysis,
+        mention.userHandle,
+        posts.length,
+      );
 
-        await replyToMention(agent, mention, responseMessage, dbAnalysis.id);
-        logger.success(`✅ Analyzed posts for mention for ${mention.userHandle}`);
-      } else {
-        logger.warn(`⚠️ No posts found for ${mention.userHandle}`);
-
-        // Mark the mention as done, but with no analysis or reply
-        await db.markMentionAsDone({
-          mentionId: mention.id,
-          replyPostId: '',
-          replyUrl: '',
-        });
-
-        logger.info(`✅ Marked mention as processed (no posts found) for ${mention.userHandle}`);
-      }
+      await replyToMention(agent, mention, responseMessage, dbAnalysis.id);
+      logger.success(`✅ Analyzed ${posts.length} posts for mention for ${mention.userHandle}`);
     }
   } catch (error) {
     // Leave it ANALYZING. The rest of this run moves on past it, and

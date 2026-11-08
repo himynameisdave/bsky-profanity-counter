@@ -129,6 +129,11 @@ export const generateResponseMessage = (
   username: string,
   postCount: number,
 ): string => {
+  // Zero posts isn't proof they never swear, so don't call them a good citizen
+  if (postCount === 0) {
+    return `No original posts found for @${username} in the last year to analyse.`;
+  }
+
   if (analysis.totalCount === 0) {
     return `@${username} has been a good citizen!\nNo profanity found in their last ${postCount.toLocaleString('en-CA')} posts.`;
   }
