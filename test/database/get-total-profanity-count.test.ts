@@ -21,20 +21,20 @@ describe(getTotalProfanityCount, () => {
     aggregate.mockResolvedValue({ _sum: { profanityCount: 1234 } });
   });
 
-  it('leaves out the handle it is told to, so the bot never counts itself', async () => {
-    await expect(getTotalProfanityCount({ excludeHandle: 'counter.example.com' })).resolves.toBe(
-      1234,
-    );
+  it('leaves out the DID it is told to, so the bot never counts itself', async () => {
+    await expect(getTotalProfanityCount({ excludeDid: 'did:plc:counter' })).resolves.toBe(1234);
 
     expect(aggregate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userHandle: { not: 'counter.example.com' } } }),
+      expect.objectContaining({ where: { did: { not: 'did:plc:counter' } } }),
     );
   });
 
-  it('counts everyone when there is no handle to leave out', async () => {
+  it('excludes quarantined legacy analyses even without a bot DID', async () => {
     await getTotalProfanityCount();
 
-    expect(aggregate).toHaveBeenCalledWith(expect.objectContaining({ where: {} }));
+    expect(aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { did: { not: null } } }),
+    );
   });
 
   it('is zero before anyone has been analyzed', async () => {

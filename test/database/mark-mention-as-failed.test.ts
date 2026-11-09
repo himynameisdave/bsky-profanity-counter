@@ -15,11 +15,11 @@ const { markMentionAsFailed } = await import('../../src/services/database.js');
 
 describe(markMentionAsFailed, () => {
   it('moves the mention to FAILED, which resetStuckMentions never picks back up', async () => {
-    await markMentionAsFailed('mention-id');
+    await markMentionAsFailed('mention-id', 'BlockedActor');
 
     expect(update).toHaveBeenCalledExactlyOnceWith({
       where: { id: 'mention-id' },
-      data: { status: 'FAILED' },
+      data: { status: 'FAILED', lastError: 'BlockedActor' },
     });
   });
 });

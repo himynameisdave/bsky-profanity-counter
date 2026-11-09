@@ -6,7 +6,7 @@ import * as profanity from './services/profanity.js';
 import * as logger from './services/logger.js';
 import { handleSelfTargeting } from './services/self-targeting.js';
 import { replyToMention } from './services/reply.js';
-import { describeError } from './errors.js';
+import { describeError, isTerminalMentionError, TerminalMentionError } from './errors.js';
 import { stats } from './run-stats.js';
 import { ANALYSIS_CACHE_TTL_MS, FULL_RECOUNT_INTERVAL_MS, MAX_POSTS } from './config.js';
 import type { ProfanityDetails } from './services/database.js';
@@ -49,7 +49,8 @@ function getRecountBase(existing: Analysis | null, did: string) {
     !details?.days ||
     !details.checkpoint ||
     !details.fullCountAt ||
-    // The handle belongs to a different account now
+    // Only reuse checkpoints belonging to this account
+    existing.did !== did ||
     details.did !== did ||
     // We stopped at MAX_POSTS, so we never counted their oldest posts in the window
     existing.totalPosts >= MAX_POSTS ||
@@ -66,7 +67,10 @@ function getRecountBase(existing: Analysis | null, did: string) {
  */
 async function giveUpOnMention(mention: Mention) {
   try {
-    await db.markMentionAsFailed(mention.id);
+    await db.markMentionAsFailed(
+      mention.id,
+      mention.lastError ?? 'Retry budget exhausted; previous attempts were interrupted',
+    );
     stats.gaveUp++;
     logger.warn(
       `🪦 Giving up on mention ${mention.id} for ${mention.userHandle}: ${mention.attempts - 1} attempts have failed since ${mention.firstAttemptedAt?.toISOString()}`,
@@ -78,6 +82,19 @@ async function giveUpOnMention(mention: Mention) {
   }
 }
 
+/** Fetch the display handle at reply time; never resolve it to choose identity. */
+async function refreshTarget(agent: BskyAgent, mention: Mention): Promise<Mention> {
+  if (!mention.did) {
+    throw new TerminalMentionError('Missing trustworthy target DID');
+  }
+  const profile = await bsky.getProfile(agent, mention.did);
+  if (profile.did !== mention.did) {
+    throw new TerminalMentionError('Profile DID does not match the recorded target');
+  }
+  await db.refreshTargetHandle(mention.id, mention.did, profile.handle);
+  return { ...mention, userHandle: profile.handle };
+}
+
 /**
  * Process a single mention by analyzing the user's post history
  * and replying with the profanity analysis results.
@@ -87,17 +104,22 @@ async function processMention(agent: BskyAgent, mention: Mention) {
     // getUnprocessedMention already marked it ANALYZING when it claimed it
     logger.info(`🔍 Processing mention for user: ${mention.userHandle}`);
 
-    // Check if user is trying to target the bot itself. Our handle comes from the
-    // session, so this holds whatever account the bot is running as
-    if (mention.userHandle === agent.session?.handle) {
-      const outcome = await handleSelfTargeting(agent, mention);
-      stats[outcome]++;
-      return; // Exit early, don't do profanity analysis
+    if (!mention.did) {
+      throw new TerminalMentionError(
+        'Missing trustworthy target DID; historical mention quarantined',
+      );
     }
 
-    const existing = await db.findAnalysis(mention.userHandle);
+    if (mention.did === agent.session?.did) {
+      const outcome = await handleSelfTargeting(agent, mention);
+      stats[outcome]++;
+      return;
+    }
+
+    const existing = await db.findAnalysis(mention.did);
 
     if (existing && Date.now() - existing.lastAnalyzedAt.getTime() < ANALYSIS_CACHE_TTL_MS) {
+      const targetMention = await refreshTarget(agent, mention);
       logger.info(`✨ Found freshly cached analysis for ${mention.userHandle}`);
 
       // Generate the response message using the existing analysis
@@ -114,18 +136,15 @@ async function processMention(agent: BskyAgent, mention: Mention) {
             })),
           postCount: existing.totalPosts,
         },
-        mention.userHandle,
+        targetMention.userHandle,
         existing.totalPosts,
       );
 
-      const outcome = await replyToMention(agent, mention, responseMessage, existing.id);
+      const outcome = await replyToMention(agent, targetMention, responseMessage, existing.id);
       stats[outcome]++;
       logger.success(`✅ Used cached analysis for mention for ${mention.userHandle}`);
     } else {
-      // Get the user's profile to get their DID
-      const profile = await bsky.getProfile(agent, mention.userHandle);
-
-      const previous = getRecountBase(existing, profile.did);
+      const previous = getRecountBase(existing, mention.did);
       logger.info(
         previous
           ? `🔍 Adding ${mention.userHandle}'s new posts to their last analysis...`
@@ -133,21 +152,25 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       );
 
       // Just their new posts if we can add them to the last analysis, otherwise their whole year
-      const posts = await bsky.getUserPosts(agent, profile.did, previous?.checkpoint);
+      const posts = await bsky.getUserPosts(agent, mention.did, previous?.checkpoint);
 
       // Saved and answered even with no posts, so a quiet account still gets a
       // reply, and a repeat request is served from the cache
       const analysis = profanity.analyzePosts(posts, previous?.days);
 
+      // Refresh after the feed scan, which can take minutes on a full count.
+      const targetMention = await refreshTarget(agent, mention);
+
       // Store the analysis in the database
       const dbAnalysis = await db.createOrUpdateAnalysis({
-        userHandle: mention.userHandle,
+        did: mention.did,
+        userHandle: targetMention.userHandle,
         totalPosts: analysis.postCount,
         profanityCount: analysis.totalCount,
         profanityDetails: {
           wordCounts: analysis.wordCounts,
           topProfanities: analysis.topThree.map((p) => ({ word: p.word, count: p.count })),
-          did: profile.did,
+          did: mention.did,
           days: analysis.days,
           checkpoint: bsky.getFeedCheckpoint(posts, previous?.checkpoint),
           fullCountAt: previous?.fullCountAt ?? new Date().toISOString(),
@@ -157,23 +180,37 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       // Generate the response message
       const responseMessage = profanity.generateResponseMessage(
         analysis,
-        mention.userHandle,
+        targetMention.userHandle,
         analysis.postCount,
       );
 
-      const outcome = await replyToMention(agent, mention, responseMessage, dbAnalysis.id);
+      const outcome = await replyToMention(agent, targetMention, responseMessage, dbAnalysis.id);
       stats[outcome]++;
       logger.success(
         `✅ Analyzed ${posts.length} new posts (${analysis.postCount} in total) for mention for ${mention.userHandle}`,
       );
     }
   } catch (error) {
-    // Leave it ANALYZING. The rest of this run moves on past it, and
+    const lastError = describeError(error);
+    logger.error(
+      `❌ Attempt ${mention.attempts} at mention ${mention.id} for ${mention.userHandle} failed: ${lastError}`,
+    );
+    try {
+      if (isTerminalMentionError(error)) {
+        await db.markMentionAsFailed(mention.id, lastError);
+        // Counted once: it won't be retried, so it isn't also a failure
+        stats.gaveUp++;
+        return;
+      }
+      await db.recordMentionError(mention.id, lastError);
+    } catch (recordError) {
+      logger.error(
+        `❌ Could not record error for mention ${mention.id}: ${describeError(recordError)}`,
+      );
+    }
+    // Retryable failures stay ANALYZING. The rest of this run moves on past it, and
     // resetStuckMentions puts it back in the queue for a later run, which
     // decides whether it still has retries left (see hasExhaustedRetries)
-    logger.error(
-      `❌ Attempt ${mention.attempts} at mention ${mention.id} for ${mention.userHandle} failed, leaving it for a later run: ${describeError(error)}`,
-    );
     stats.failed++;
   }
 }

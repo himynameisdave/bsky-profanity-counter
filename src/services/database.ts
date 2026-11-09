@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { planIdentityBackfill } from './identity-backfill.js';
 import type { DailyCounts } from './profanity.js';
 import type { FeedCheckpoint } from './bluesky.js';
 
@@ -33,11 +34,13 @@ const prisma = new PrismaClient();
  * and one reply, and never resets a mention we've already replied to.
  */
 export async function storeMention({
+  did,
   userHandle,
   postId,
   postUrl,
   isReply,
 }: {
+  did: string;
   userHandle: string;
   postId: string;
   postUrl: string;
@@ -48,6 +51,7 @@ export async function storeMention({
     // We've already recorded this one, leave its status and reply alone
     update: {},
     create: {
+      did,
       userHandle,
       postId,
       postUrl,
@@ -136,61 +140,51 @@ export async function markMentionAsDone({
  * Mark a mention as failed: we gave up on it, and it will never be retried.
  * Unlike ANALYZING, resetStuckMentions leaves FAILED mentions alone.
  */
-export async function markMentionAsFailed(mentionId: string) {
+export async function markMentionAsFailed(mentionId: string, lastError: string) {
   return prisma.mention.update({
     where: { id: mentionId },
-    data: { status: 'FAILED' },
+    data: { status: 'FAILED', lastError },
   });
 }
 
-/**
- * Find the analysis of a user, however old it is
- */
-export async function findAnalysis(userHandle: string) {
-  return prisma.analysis.findUnique({ where: { userHandle } });
+/** Record an attempt's error without changing its retry state. */
+export async function recordMentionError(mentionId: string, lastError: string) {
+  return prisma.mention.update({ where: { id: mentionId }, data: { lastError } });
 }
 
-/**
- * Create or update analysis for a user
- */
+/** Find a proven account's analysis, however old it is. */
+export async function findAnalysis(did: string) {
+  return prisma.analysis.findUnique({ where: { did } });
+}
+
+/** Save one snapshot per account, keeping its latest display handle. */
 export async function createOrUpdateAnalysis({
+  did,
   userHandle,
   totalPosts,
   profanityCount,
   profanityDetails,
 }: {
+  did: string;
   userHandle: string;
   totalPosts: number;
   profanityCount: number;
   profanityDetails: ProfanityDetails;
 }) {
-  // Try to find existing analysis to update
-  const existingAnalysis = await prisma.analysis.findUnique({
-    where: { userHandle },
+  const data = { userHandle, totalPosts, profanityCount, profanityDetails };
+  return prisma.analysis.upsert({
+    where: { did },
+    update: { ...data, lastAnalyzedAt: new Date() },
+    create: { ...data, did },
   });
+}
 
-  if (existingAnalysis) {
-    return prisma.analysis.update({
-      where: { id: existingAnalysis.id },
-      data: {
-        totalPosts,
-        profanityCount,
-        profanityDetails,
-        lastAnalyzedAt: new Date(),
-      },
-    });
-  }
-
-  // Create new analysis if none exists
-  return prisma.analysis.create({
-    data: {
-      userHandle,
-      totalPosts,
-      profanityCount,
-      profanityDetails,
-      // lastAnalyzedAt defaults to now
-    },
-  });
+/** Refresh display fields without extending the analysis cache's lifetime. */
+export async function refreshTargetHandle(mentionId: string, did: string, userHandle: string) {
+  await prisma.$transaction([
+    prisma.mention.update({ where: { id: mentionId }, data: { userHandle } }),
+    prisma.analysis.updateMany({ where: { did }, data: { userHandle } }),
+  ]);
 }
 
 /**
@@ -213,19 +207,19 @@ export async function cleanupOldAnalyses(olderThanDays = 30) {
 }
 
 /**
- * Total profanity across every analysis, leaving out `excludeHandle` (the bot
+ * Total profanity across every analysis, leaving out `excludeDid` (the bot
  * itself) when it's given
  */
 export async function getTotalProfanityCount({
-  excludeHandle,
-}: { excludeHandle?: string } = {}): Promise<number> {
+  excludeDid,
+}: { excludeDid?: string } = {}): Promise<number> {
   // `_sum` is Prisma's aggregate API, not ours to rename
   // oxlint-disable-next-line no-underscore-dangle
   const result = await prisma.analysis.aggregate({
     _sum: {
       profanityCount: true,
     },
-    where: excludeHandle ? { userHandle: { not: excludeHandle } } : {},
+    where: { did: excludeDid ? { not: excludeDid } : { not: null } },
   });
 
   // oxlint-disable-next-line no-underscore-dangle
@@ -259,4 +253,42 @@ export async function resetStuckMentions(olderThanMinutes: number) {
  */
 export async function disconnect() {
   await prisma.$disconnect();
+}
+
+/** Offline only: stop all bot writers first. The apply is atomic and rerunnable. */
+export async function backfillIdentity(apply: boolean) {
+  return prisma.$transaction(
+    async (tx) => {
+      const analyses = await tx.analysis.findMany();
+      const mentions = await tx.mention.findMany();
+      const plan = planIdentityBackfill(analyses, mentions);
+      if (apply) {
+        // Clear candidates first, so a different canonical snapshot can take over
+        // an existing DID without violating the unique constraint mid-transaction.
+        await tx.analysis.updateMany({
+          where: { id: { in: plan.analysisUpdates.map((row) => row.id) } },
+          data: { did: null },
+        });
+        for (const { id, ...data } of plan.analysisUpdates) {
+          // Each update depends on the cleared unique keys in this transaction
+          // oxlint-disable-next-line no-await-in-loop
+          await tx.analysis.update({ where: { id }, data });
+        }
+        for (const { id, ...data } of plan.mentionUpdates) {
+          // Keep all history, reply references and analysis relationships intact
+          // oxlint-disable-next-line no-await-in-loop
+          await tx.mention.update({ where: { id }, data });
+        }
+      }
+      return {
+        analyses: analyses.length,
+        activeAnalyses: plan.analysisUpdates.filter((row) => row.did).length,
+        quarantinedAnalyses: analyses.length - plan.analysisUpdates.filter((row) => row.did).length,
+        mentions: mentions.length,
+        mentionsWithoutIdentity: plan.mentionUpdates.filter((row) => !row.did).length,
+        newlyFailedMentions: plan.mentionUpdates.filter((row) => row.status === 'FAILED').length,
+      };
+    },
+    { timeout: 120_000 },
+  );
 }

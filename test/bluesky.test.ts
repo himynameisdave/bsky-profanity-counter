@@ -129,3 +129,34 @@ describe('Replying to a mention', () => {
     });
   });
 });
+
+describe('reply identity facets', () => {
+  it('uses the target DID even if the handle has been reassigned, with UTF-8 byte offsets', async () => {
+    const post = vi.fn<BskyAgent['post']>().mockResolvedValue({ uri: 'at://reply', cid: 'cid' });
+    const resolveHandle = vi.fn<BskyAgent['resolveHandle']>();
+    const actor = { post, resolveHandle } as unknown as BskyAgent;
+    await replyToPost(actor, topLevelMentionPost(), '💩 @Verbatim.Example.com has swears', {
+      did: 'did:plc:original',
+      handle: 'Verbatim.Example.com',
+    });
+    expect(resolveHandle).not.toHaveBeenCalled();
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({
+        facets: [
+          {
+            index: { byteStart: 5, byteEnd: 26 },
+            features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:original' }],
+          },
+        ],
+      }),
+    );
+  });
+
+  it('fails oversized outgoing text before asking Bluesky to post it', async () => {
+    const post = vi.fn<BskyAgent['post']>();
+    await expect(
+      replyToPost({ post } as unknown as BskyAgent, topLevelMentionPost(), 'a'.repeat(301)),
+    ).rejects.toThrow('Reply exceeds Bluesky text limits');
+    expect(post).not.toHaveBeenCalled();
+  });
+});

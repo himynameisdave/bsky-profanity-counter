@@ -6,7 +6,7 @@ import {
   type AppBskyRichtextFacet,
 } from '@atproto/api';
 import * as logger from './logger.js';
-import { describeError } from '../errors.js';
+import { describeError, isTerminalMentionError, TerminalMentionError } from '../errors.js';
 import { BLUESKY_SERVICE, MAX_POSTS } from '../config.js';
 import { getYearCutoff } from './profanity.js';
 import type { BlueskyCredentials } from '../config.js';
@@ -345,6 +345,9 @@ const getAuthorFeedPage = async (
         agent.getAuthorFeed({ actor: did, limit: FEED_PAGE_SIZE, cursor }, { signal }),
       );
     } catch (error) {
+      if (isTerminalMentionError(error)) {
+        throw error;
+      }
       lastError = error;
       logger.warn(
         `⚠️ Error fetching posts chunk #${chunk} (attempt ${attempt}/${MAX_FEED_PAGE_ATTEMPTS}): ${describeError(error)}`,
@@ -616,45 +619,32 @@ export const findOwnReply = async (
 // Reply to a post.
 // `replyTo` should be the post record as returned by getPost(), so that the
 // thread root can be derived from it (see getReplyRefs).
-export const replyToPost = async (agent: BskyAgent, replyTo: PostRecord, text: string) => {
+export const replyToPost = async (
+  agent: BskyAgent,
+  replyTo: PostRecord,
+  text: string,
+  target?: { did: string; handle: string },
+) => {
   logger.info(`🗣️ Replying to ${replyTo.uri}...`);
 
-  // Create facets for mentions in the text
+  const graphemes = [...new Intl.Segmenter().segment(text)].length;
+  if (graphemes > 300 || Buffer.byteLength(text, 'utf8') > 3000) {
+    throw new TerminalMentionError('Reply exceeds Bluesky text limits');
+  }
+
+  // The handle is verbatim display text. Never resolve it again to choose the
+  // facet identity: it may have been reassigned since we fetched the profile.
   const facets: AppBskyRichtextFacet.Main[] = [];
-
-  // Regular expression to find mentions in the text
-  const mentionRegex = /@(?<handle>[a-zA-Z0-9.-]+)/gu;
-  let match;
-
-  while ((match = mentionRegex.exec(text)) !== null) {
-    const handle = match.groups?.handle ?? '';
-    const start = match.index;
-    const end = start + match[0].length;
-
-    try {
-      // Handles are resolved one at a time as the regex walks the text
-      // oxlint-disable-next-line no-await-in-loop
-      const resolveResponse = await withTimeout(REQUEST_TIMEOUT_MS, (signal) =>
-        agent.resolveHandle({ handle }, { signal }),
-      );
-      const { did } = resolveResponse.data;
-
-      // Add facet for the mention
-      facets.push({
-        index: {
-          byteStart: start,
-          byteEnd: end,
-        },
-        features: [
-          {
-            $type: 'app.bsky.richtext.facet#mention',
-            did,
-          },
-        ],
-      } as AppBskyRichtextFacet.Main);
-    } catch (error) {
-      logger.error(`❌ Error resolving handle ${handle}\n\t- ${describeError(error)}`);
-    }
+  const label = target ? `@${target.handle}` : '';
+  const start = label ? text.indexOf(label) : -1;
+  if (target && start >= 0) {
+    facets.push({
+      index: {
+        byteStart: Buffer.byteLength(text.slice(0, start), 'utf8'),
+        byteEnd: Buffer.byteLength(text.slice(0, start + label.length), 'utf8'),
+      },
+      features: [{ $type: 'app.bsky.richtext.facet#mention', did: target.did }],
+    });
   }
 
   // Set up the reply structure, keeping the bot's reply in the same thread
@@ -662,13 +652,27 @@ export const replyToPost = async (agent: BskyAgent, replyTo: PostRecord, text: s
 
   // Post with facets if any were created. If this times out, the post may still
   // go through; the retry checks for that before replying again (see findOwnReply).
-  return withTimeout(REQUEST_TIMEOUT_MS, () =>
-    agent.post({
-      text,
-      facets: facets.length > 0 ? facets : undefined,
-      reply,
-    }),
-  );
+  try {
+    return await withTimeout(REQUEST_TIMEOUT_MS, () =>
+      agent.post({
+        text,
+        facets: facets.length > 0 ? facets : undefined,
+        reply,
+      }),
+    );
+  } catch (error) {
+    // The PDS maps invalid outgoing records to InvalidRequest. Recognise this
+    // only at the write boundary; validation of incoming responses still retries.
+    if (
+      error instanceof XRPCError &&
+      error.status === 400 &&
+      error.error === 'InvalidRequest' &&
+      error.message.startsWith('Invalid app.bsky.feed.post record:')
+    ) {
+      throw new TerminalMentionError('Invalid outgoing post record', { cause: error });
+    }
+    throw error;
+  }
 };
 
 // Get a profile by DID

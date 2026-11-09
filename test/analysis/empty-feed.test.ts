@@ -13,6 +13,8 @@ const db = vi.hoisted(() => ({
   findAnalysis: vi.fn<typeof Db.findAnalysis>(),
   createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
   markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
+  recordMentionError: vi.fn<typeof Db.recordMentionError>(),
+  refreshTargetHandle: vi.fn<typeof Db.refreshTargetHandle>(),
   markMentionAsFailed: vi.fn<typeof Db.markMentionAsFailed>(),
 }));
 
@@ -30,8 +32,8 @@ vi.mock(import('../../src/services/logger.js'), () => ({
 vi.mock(import('../../src/services/bluesky.js'), async (importOriginal) => ({
   ...(await importOriginal()),
   getProfile: vi.fn<typeof Bsky.getProfile>(
-    async (_agent, handle) =>
-      ({ did: `did:plc:${handle}` }) as AppBskyActorDefs.ProfileViewDetailed,
+    async (_agent, did) =>
+      ({ did, handle: did.slice('did:plc:'.length) }) as AppBskyActorDefs.ProfileViewDetailed,
   ),
   getPost: vi.fn<typeof Bsky.getPost>(async () => ({
     uri: 'at://did:plc:someone/app.bsky.feed.post/abc',
@@ -54,6 +56,8 @@ const twoYearsAgo = () => {
 const makeMention = (id: string): Mention => ({
   id,
   userHandle: HANDLE,
+  did: `did:plc:${HANDLE}`,
+  lastError: null,
   postId: id,
   postUrl: `at://did:plc:someone/app.bsky.feed.post/${id}`,
   isReply: false,
@@ -113,6 +117,7 @@ describe('processUnanalyzedMentions for a target with no posts in the last year'
         agent,
         expect.anything(),
         EMPTY_WINDOW_MESSAGE,
+        { did: `did:plc:${HANDLE}`, handle: HANDLE },
       );
       expect(db.markMentionAsDone).toHaveBeenLastCalledWith(
         expect.objectContaining({ mentionId: 'first', analysisId: 'analysis' }),
@@ -127,6 +132,7 @@ describe('processUnanalyzedMentions for a target with no posts in the last year'
         agent,
         expect.anything(),
         EMPTY_WINDOW_MESSAGE,
+        { did: `did:plc:${HANDLE}`, handle: HANDLE },
       );
       expect(db.markMentionAsDone).toHaveBeenLastCalledWith(
         expect.objectContaining({ mentionId: 'second', analysisId: 'analysis' }),
@@ -164,6 +170,9 @@ describe('processUnanalyzedMentions for a target with no posts in the last year'
 
     expect(getAuthorFeed).toHaveBeenCalledTimes(2);
     expect(bsky.replyToPost).toHaveBeenCalledTimes(2);
-    expect(bsky.replyToPost).toHaveBeenLastCalledWith(agent, expect.anything(), firstReply);
+    expect(bsky.replyToPost).toHaveBeenLastCalledWith(agent, expect.anything(), firstReply, {
+      did: `did:plc:${HANDLE}`,
+      handle: HANDLE,
+    });
   });
 });

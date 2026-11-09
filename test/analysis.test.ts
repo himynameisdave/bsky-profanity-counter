@@ -12,6 +12,8 @@ const db = vi.hoisted(() => ({
   findAnalysis: vi.fn<typeof Db.findAnalysis>(),
   createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
   markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
+  recordMentionError: vi.fn<typeof Db.recordMentionError>(),
+  refreshTargetHandle: vi.fn<typeof Db.refreshTargetHandle>(),
 }));
 
 const bsky = vi.hoisted(() => ({
@@ -56,6 +58,8 @@ const MENTION_POST = { uri: 'at://did:plc:someone/app.bsky.feed.post/abc', cid: 
 const makeMention = (userHandle: string): Mention => ({
   id: 'mention',
   userHandle,
+  did: userHandle === BOT_HANDLE ? 'did:plc:counter' : `did:plc:${userHandle}`,
+  lastError: null,
   postId: 'abc',
   postUrl: MENTION_POST.uri,
   isReply: true,
@@ -89,8 +93,8 @@ describe('processUnanalyzedMentions when someone asks the bot to audit itself', 
     db.findAnalysis.mockResolvedValue(null);
     db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' } as Analysis);
     bsky.getProfile.mockImplementation(
-      async (_agent, handle) =>
-        ({ did: `did:plc:${handle}` }) as AppBskyActorDefs.ProfileViewDetailed,
+      async (_agent, did) =>
+        ({ did, handle: did.slice('did:plc:'.length) }) as AppBskyActorDefs.ProfileViewDetailed,
     );
     bsky.getUserPosts.mockResolvedValue([{ uri: 'post' } as AppBskyFeedDefs.PostView]);
     bsky.getPost.mockResolvedValue(MENTION_POST);
@@ -100,8 +104,8 @@ describe('processUnanalyzedMentions when someone asks the bot to audit itself', 
     });
   });
 
-  it('replies with a whimsical one-liner instead of counting its own posts', async () => {
-    queue(makeMention(BOT_HANDLE));
+  it('detects itself by DID even after the bot renames', async () => {
+    queue({ ...makeMention(BOT_HANDLE), userHandle: 'old-bot.example.com' });
 
     await processUnanalyzedMentions(agent);
 

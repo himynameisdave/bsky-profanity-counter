@@ -126,6 +126,16 @@ describe(getUserPosts, () => {
     expect(getAuthorFeed).toHaveBeenCalledTimes(MAX_FEED_PAGE_ATTEMPTS);
   });
 
+  it('does not retry a clearly terminal blocked feed', async () => {
+    const blocked = new XRPCError(400, 'BlockedActor', 'Blocked by target');
+    const { agent, getAuthorFeed } = makeAgent(async () => {
+      throw blocked;
+    });
+    const { error } = await settle(getUserPosts(agent, DID));
+    expect(error).toBe(blocked);
+    expect(getAuthorFeed).toHaveBeenCalledOnce();
+  });
+
   it('keeps the original error, and the field that broke validation, as the cause', async () => {
     const { agent } = makeAgent(async () => {
       throw makeInvalidResponseError();
