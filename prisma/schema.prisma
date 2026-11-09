@@ -54,8 +54,8 @@ model Mention {
 
 model Analysis {
   id                String    @id @default(cuid())
-  did               String?   @unique // Null means archived/unproven; excluded from caches and totals
-  userHandle        String    // Display only; several accounts may have used this handle
+  did               String?   @unique // Null means archived/unproven; excluded from caches but may still count toward the profile total
+  userHandle        String    // Display handle; also used to deduplicate archived profile totals, never as cache identity
   totalPosts        Int       // Total posts analyzed
   profanityCount    Int       // Count of profanity instances
   profanityDetails  Json      // Store all profanity details including top ones

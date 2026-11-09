@@ -28,8 +28,11 @@ export async function updateProfileDescription(agent: BskyAgent): Promise<void> 
   try {
     logger.info('📊 Getting total profanity count...');
 
-    // The bot never counts itself, whatever DID it's running under
-    const totalCount = await db.getTotalProfanityCount({ excludeDid: agent.session?.did });
+    // The bot never counts itself, whatever DID or handle it's running under
+    const totalCount = await db.getTotalProfanityCount({
+      excludeDid: agent.session?.did,
+      excludeHandle: agent.session?.handle,
+    });
     logger.info(`📈 Total profanity count: ${formatNumber(totalCount)}`);
 
     const newDescription = generateProfileDescription(totalCount);

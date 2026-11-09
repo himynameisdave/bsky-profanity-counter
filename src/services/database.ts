@@ -1,5 +1,5 @@
-import { PrismaClient } from '@prisma/client';
-import { planIdentityBackfill } from './identity-backfill.js';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { DUPLICATE_SNAPSHOT_REASON, planIdentityBackfill } from './identity-backfill.js';
 import type { DailyCounts } from './profanity.js';
 import type { FeedCheckpoint } from './bluesky.js';
 
@@ -209,23 +209,37 @@ export async function cleanupOldAnalyses(olderThanDays = 30) {
 }
 
 /**
- * Total profanity across every analysis, leaving out `excludeDid` (the bot
- * itself) when it's given
+ * Total profanity across every analysis, leaving out the bot itself (by
+ * `excludeDid`, and by `excludeHandle` for its archived rows, which have no DID).
+ *
+ * Archived analyses still count, so the total doesn't drop when old rows lose
+ * their DID. Two kinds are skipped so nobody is counted twice: duplicate
+ * snapshots of a DID we kept another analysis for, and anyone whose handle has
+ * a DID'd analysis now (re-analyzing someone makes a new row, it doesn't update
+ * their archived one).
  */
 export async function getTotalProfanityCount({
   excludeDid,
-}: { excludeDid?: string } = {}): Promise<number> {
-  // `_sum` is Prisma's aggregate API, not ours to rename
-  // oxlint-disable-next-line no-underscore-dangle
-  const result = await prisma.analysis.aggregate({
-    _sum: {
-      profanityCount: true,
-    },
-    where: { did: excludeDid ? { not: excludeDid } : { not: null } },
-  });
+  excludeHandle,
+}: { excludeDid?: string; excludeHandle?: string } = {}): Promise<number> {
+  const [{ total }] = await prisma.$queryRaw<[{ total: bigint | null }]>`
+    SELECT SUM(a."profanityCount") AS total
+    FROM "Analysis" a
+    WHERE (
+      a."did" IS NOT NULL
+      OR (
+        a."profanityDetails" -> 'identityBackfill' ->> 'reason' IS DISTINCT FROM ${DUPLICATE_SNAPSHOT_REASON}
+        AND NOT EXISTS (
+          SELECT 1 FROM "Analysis" b
+          WHERE b."did" IS NOT NULL AND b."userHandle" = a."userHandle"
+        )
+      )
+    )
+    ${excludeDid ? Prisma.sql`AND a."did" IS DISTINCT FROM ${excludeDid}` : Prisma.empty}
+    ${excludeHandle ? Prisma.sql`AND a."userHandle" <> ${excludeHandle}` : Prisma.empty}
+  `;
 
-  // oxlint-disable-next-line no-underscore-dangle
-  return result._sum.profanityCount ?? 0;
+  return Number(total ?? 0);
 }
 
 /**

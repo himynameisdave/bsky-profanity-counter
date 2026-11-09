@@ -9,6 +9,23 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/profanity_counter_test
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: profanity_counter_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout repository
@@ -44,6 +61,9 @@ jobs:
       - name: Generate Prisma client
         run: pnpm prisma:generate
 
+      - name: Prepare integration database
+        run: pnpm db:push --skip-generate
+
       - name: Check formatting
         run: pnpm format:check
 
@@ -55,6 +75,8 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+        env:
+          PROFILE_TOTAL_DATABASE_TESTS: '1'
 
       # Production compiles with tsconfig.build.json, which typecheck doesn't exercise
       - name: Build
