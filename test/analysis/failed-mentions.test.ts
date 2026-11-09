@@ -50,6 +50,7 @@ vi.mock(import('../../src/services/profanity.js'), () => ({
 const { processUnanalyzedMentions, MAX_FAILED_ATTEMPTS, MENTION_RETRY_WINDOW_MS } =
   await import('../../src/analysis.js');
 const { stats } = await import('../../src/run-stats.js');
+const realBsky = await vi.importActual<typeof Bsky>('../../src/services/bluesky.js');
 
 const agent = {} as BskyAgent;
 const HOUR_MS = 60 * 60 * 1000;
@@ -128,6 +129,7 @@ const useMentionTable = (mentions: Mention[]) => {
   return {
     statusOf: (id: string) => find(id).status,
     errorOf: (id: string) => find(id).lastError,
+    attemptsOf: (id: string) => find(id).attempts,
     // What resetStuckMentions does at the start of the next run
     startNextRun: () => {
       for (const row of rows) {
@@ -370,6 +372,104 @@ describe(processUnanalyzedMentions, () => {
     table.startNextRun();
     await processUnanalyzedMentions(agent);
     expect(bsky.getProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails on the first attempt when the PDS rejects an outgoing post record, and never retries it', async () => {
+    const failure = new XRPCError(
+      400,
+      'InvalidRequest',
+      'Invalid app.bsky.feed.post record: Record/reply/root/cid must be a cid string',
+    );
+    const post = vi.fn<BskyAgent['post']>().mockRejectedValue(failure);
+    const postingAgent = { post } as unknown as BskyAgent;
+    const table = useMentionTable([makeMention({ id: 'invalid-post' })]);
+    bsky.replyToPost.mockImplementation(realBsky.replyToPost);
+    const root = { uri: 'at://did:plc:root/app.bsky.feed.post/root', cid: 'invalid-cid' };
+    bsky.getPost.mockResolvedValue({
+      uri: 'at://did:plc:someone/app.bsky.feed.post/abc',
+      cid: 'bafy-abc',
+      value: { reply: { root } },
+    });
+
+    await processUnanalyzedMentions(postingAgent);
+
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ reply: expect.objectContaining({ root }) }),
+    );
+    expect(table.statusOf('invalid-post')).toBe('FAILED');
+    expect(table.attemptsOf('invalid-post')).toBe(1);
+    expect(table.errorOf('invalid-post')).toContain(failure.message);
+    expect(db.markMentionAsFailed).toHaveBeenCalledExactlyOnceWith(
+      'invalid-post',
+      expect.stringContaining(failure.message),
+    );
+    expect(db.recordMentionError).not.toHaveBeenCalled();
+
+    table.startNextRun();
+    await processUnanalyzedMentions(postingAgent);
+
+    expect(post).toHaveBeenCalledOnce();
+    expect(db.getUnprocessedMention).toHaveBeenCalledOnce();
+    expect(table.statusOf('invalid-post')).toBe('FAILED');
+    expect(table.attemptsOf('invalid-post')).toBe(1);
+  });
+
+  it.each([
+    {
+      when: 'an unrelated InvalidRequest',
+      failure: new XRPCError(400, 'InvalidRequest', 'Unknown problem'),
+    },
+    {
+      when: 'validation of a different record type',
+      failure: new XRPCError(
+        400,
+        'InvalidRequest',
+        'Invalid app.bsky.actor.profile record: Bad description',
+      ),
+    },
+    {
+      when: 'a rate limit with validation wording',
+      failure: new XRPCError(429, 'InvalidRequest', 'Invalid app.bsky.feed.post record: Try later'),
+    },
+    {
+      when: 'a server error with validation wording',
+      failure: new XRPCError(
+        500,
+        'InvalidRequest',
+        'Invalid app.bsky.feed.post record: Server failure',
+      ),
+    },
+    { when: 'a network failure', failure: new Error('Network disconnected') },
+    {
+      when: 'an incoming-response validation error',
+      failure: new Error('The server gave an invalid response and may be out of date.', {
+        cause: new Error('Output/reply/root/cid is invalid'),
+      }),
+    },
+  ])('keeps $when at the reply boundary retryable', async ({ failure }) => {
+    const post = vi
+      .fn<BskyAgent['post']>()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue({ uri: 'at://did:plc:bot/app.bsky.feed.post/reply', cid: 'bafy-reply' });
+    const postingAgent = { post } as unknown as BskyAgent;
+    const table = useMentionTable([makeMention({ id: 'retryable-post' })]);
+    bsky.replyToPost.mockImplementation(realBsky.replyToPost);
+
+    await processUnanalyzedMentions(postingAgent);
+
+    expect(table.statusOf('retryable-post')).toBe('ANALYZING');
+    expect(table.errorOf('retryable-post')).toContain(failure.message);
+    expect(db.recordMentionError).toHaveBeenCalledExactlyOnceWith(
+      'retryable-post',
+      expect.stringContaining(failure.message),
+    );
+    expect(db.markMentionAsFailed).not.toHaveBeenCalled();
+
+    table.startNextRun();
+    await processUnanalyzedMentions(postingAgent);
+
+    expect(table.statusOf('retryable-post')).toBe('DONE');
+    expect(post).toHaveBeenCalledTimes(2);
   });
 
   it('quarantines a legacy mention with no trustworthy target DID', async () => {

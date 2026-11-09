@@ -10,5 +10,5 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src/**/*", "test/**/*", "oxlint.config.ts"]
+  "include": ["src/**/*", "scripts/**/*", "test/**/*", "oxlint.config.ts"]
 }

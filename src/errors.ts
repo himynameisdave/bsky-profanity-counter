@@ -3,6 +3,17 @@ import { XRPCError } from '@atproto/api';
 // Deep enough for any real chain, and stops us looping on a cyclic `cause`
 const MAX_CAUSE_DEPTH = 5;
 
+const TERMINAL_MENTION_ERROR_CODES = new Set([
+  'BlockedActor',
+  'BlockedByActor',
+  'ActorNotFound',
+  'RepoNotFound',
+  'AccountNotFound',
+  'AccountDeactivated',
+  'AccountTakedown',
+  'InvalidRecord',
+]);
+
 /**
  * Describes an error along with everything in its `cause` chain.
  *
@@ -42,16 +53,7 @@ export const isTerminalMentionError = (error: unknown): boolean => {
         return false;
       }
       if (
-        [
-          'BlockedActor',
-          'BlockedByActor',
-          'ActorNotFound',
-          'RepoNotFound',
-          'AccountNotFound',
-          'AccountDeactivated',
-          'AccountTakedown',
-          'InvalidRecord',
-        ].includes(current.error) ||
+        TERMINAL_MENTION_ERROR_CODES.has(current.error) ||
         (current.error === 'InvalidRequest' &&
           /^(?:Could not find (?:repo|profile)|Profile not found)/u.test(current.message))
       ) {

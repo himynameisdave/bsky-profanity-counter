@@ -1,6 +1,6 @@
-import { loadEnv } from './config.js';
-import * as db from './services/database.js';
-import * as logger from './services/logger.js';
+import { loadEnv } from '../src/config.js';
+import * as db from '../src/services/database.js';
+import * as logger from '../src/services/logger.js';
 
 // Uses the same database configuration as the bot; no Bluesky login or writes.
 loadEnv();

@@ -652,13 +652,27 @@ export const replyToPost = async (
 
   // Post with facets if any were created. If this times out, the post may still
   // go through; the retry checks for that before replying again (see findOwnReply).
-  return withTimeout(REQUEST_TIMEOUT_MS, () =>
-    agent.post({
-      text,
-      facets: facets.length > 0 ? facets : undefined,
-      reply,
-    }),
-  );
+  try {
+    return await withTimeout(REQUEST_TIMEOUT_MS, () =>
+      agent.post({
+        text,
+        facets: facets.length > 0 ? facets : undefined,
+        reply,
+      }),
+    );
+  } catch (error) {
+    // The PDS maps invalid outgoing records to InvalidRequest. Recognise this
+    // only at the write boundary; validation of incoming responses still retries.
+    if (
+      error instanceof XRPCError &&
+      error.status === 400 &&
+      error.error === 'InvalidRequest' &&
+      error.message.startsWith('Invalid app.bsky.feed.post record:')
+    ) {
+      throw new TerminalMentionError('Invalid outgoing post record', { cause: error });
+    }
+    throw error;
+  }
 };
 
 // Get a profile by DID
