@@ -55,7 +55,14 @@ export async function replyToMention(
     );
   }
 
-  const reply = earlierReply ?? (await bsky.replyToPost(agent, mentionPost, text));
+  const reply =
+    earlierReply ??
+    (await bsky.replyToPost(
+      agent,
+      mentionPost,
+      text,
+      mention.did ? { did: mention.did, handle: mention.userHandle } : undefined,
+    ));
 
   await db.markMentionAsDone({
     mentionId: mention.id,

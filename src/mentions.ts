@@ -2,7 +2,7 @@ import type { BskyAgent } from '@atproto/api';
 import * as bsky from './services/bluesky.js';
 import * as db from './services/database.js';
 import * as logger from './services/logger.js';
-import { describeError } from './errors.js';
+import { describeError, isTerminalMentionError } from './errors.js';
 import { stats } from './run-stats.js';
 import type { Notification } from './types.js';
 
@@ -33,6 +33,7 @@ function notificationToMention(notification: Notification) {
   const isReply = Boolean(record?.reply?.parent);
 
   return {
+    did: notification.author.did,
     userHandle,
     postId,
     postUrl,
@@ -41,16 +42,16 @@ function notificationToMention(notification: Notification) {
 }
 
 /**
- * Resolve the handle of the author of the post a reply is pointing at.
+ * Find the identity of the author of the post a reply is pointing at.
  *
  * Returns null when there's no parent, or it's been deleted. Throws on any
  * other error: falling back to the person who tagged us then would audit the
  * wrong person, so it's better to leave the notification for the next run.
  */
-async function getParentAuthorHandle(
+async function getParentAuthor(
   agent: BskyAgent,
   notification: Notification,
-): Promise<string | null> {
+): Promise<{ did: string; handle: string } | null> {
   const record = notification.record as NotificationRecord | undefined;
   const parentUri = record?.reply?.parent?.uri;
 
@@ -58,18 +59,33 @@ async function getParentAuthorHandle(
     return null;
   }
 
-  const parentPost = await bsky.getPost(agent, parentUri);
+  try {
+    const parentPost = await bsky.getPost(agent, parentUri);
 
-  if (!parentPost) {
-    logger.info(`🫥 The post ${notification.uri} replies to is gone, auditing its author instead`);
-    return null;
+    if (!parentPost) {
+      logger.info(
+        `🫥 The post ${notification.uri} replies to is gone, auditing its author instead`,
+      );
+      return null;
+    }
+
+    // The canonical post URI proves its author's identity, independently of the handle.
+    const [authorDid] = parentPost.uri.split('/').slice(2);
+    const profile = await bsky.getProfile(agent, authorDid);
+    return { did: authorDid, handle: profile.handle };
+  } catch (error) {
+    // Queue known terminal failures by the proven parent DID so processing can
+    // persist FAILED/lastError instead of leaving this notification unread forever.
+    // A deleted parent still takes the fallback above, exactly as before.
+    const parentDid = /^at:\/\/(?<did>did:[^/]+)\/app\.bsky\.feed\.post\/[^/]+$/u.exec(parentUri)
+      ?.groups?.did;
+    if (parentDid && isTerminalMentionError(error)) {
+      logger.warn(`⚠️ Queuing terminal parent error for ${parentDid}: ${describeError(error)}`);
+      // A temporary display placeholder; processing must refresh it before replying.
+      return { did: parentDid, handle: parentDid };
+    }
+    throw error;
   }
-
-  // Get the author's DID from the URI, then their profile
-  const [authorDid] = parentPost.uri.split('/').slice(2);
-  const profile = await bsky.getProfile(agent, authorDid);
-
-  return profile.handle;
 }
 
 /**
@@ -107,9 +123,10 @@ export default async function storeMentions(
       if (mentionData.isReply) {
         // Deliberately sequential: each mention gates how far the read cursor moves
         // oxlint-disable-next-line no-await-in-loop
-        const parentHandle = await getParentAuthorHandle(agent, mention);
-        if (parentHandle) {
-          mentionData.userHandle = parentHandle;
+        const parentAuthor = await getParentAuthor(agent, mention);
+        if (parentAuthor) {
+          mentionData.did = parentAuthor.did;
+          mentionData.userHandle = parentAuthor.handle;
         }
       }
 

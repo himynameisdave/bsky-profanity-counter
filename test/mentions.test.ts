@@ -1,3 +1,4 @@
+import { XRPCError } from '@atproto/api';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BskyAgent } from '@atproto/api';
 import type { Notification } from '../src/types.js';
@@ -63,6 +64,9 @@ describe(storeMentions, () => {
       '2',
     ]);
     expect(bsky.markNotificationsAsRead).toHaveBeenCalledWith(agent, '2026-01-02T06:00:00.000Z');
+    expect(db.storeMention).toHaveBeenCalledWith(
+      expect.objectContaining({ did: 'did:plc:someone' }),
+    );
   });
 
   it('advances the read cursor only up to the last mention stored before a failure', async () => {
@@ -132,7 +136,7 @@ describe(storeMentions, () => {
 
       expect(bsky.getProfile).toHaveBeenCalledWith(agent, 'did:plc:parent');
       expect(db.storeMention).toHaveBeenCalledWith(
-        expect.objectContaining({ userHandle: 'parent.bsky.social' }),
+        expect.objectContaining({ did: 'did:plc:parent', userHandle: 'parent.bsky.social' }),
       );
     });
 
@@ -146,8 +150,22 @@ describe(storeMentions, () => {
       );
 
       expect(db.storeMention).toHaveBeenCalledWith(
-        expect.objectContaining({ userHandle: 'someone.bsky.social' }),
+        expect.objectContaining({ did: 'did:plc:someone', userHandle: 'someone.bsky.social' }),
       );
+    });
+
+    it('queues a terminal parent-profile error under the parent DID so its failure can be persisted', async () => {
+      vi.mocked(bsky.getPost).mockResolvedValue({ uri: PARENT_URI, cid: 'cid' });
+      vi.mocked(bsky.getProfile).mockRejectedValue(new XRPCError(400, 'BlockedActor', 'Blocked'));
+      await storeMentions(
+        agent,
+        [makeReply('1', '2026-01-01T00:00:00.000Z')],
+        '2026-01-01T00:00:00.000Z',
+      );
+      expect(db.storeMention).toHaveBeenCalledWith(
+        expect.objectContaining({ did: 'did:plc:parent' }),
+      );
+      expect(bsky.markNotificationsAsRead).toHaveBeenCalledOnce();
     });
 
     it.each([

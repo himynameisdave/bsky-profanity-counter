@@ -14,10 +14,12 @@ const db = vi.hoisted(() => ({
   findAnalysis: vi.fn<typeof Db.findAnalysis>(),
   createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
   markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
+  recordMentionError: vi.fn<typeof Db.recordMentionError>(),
+  refreshTargetHandle: vi.fn<typeof Db.refreshTargetHandle>(),
   markMentionAsFailed: vi.fn<typeof Db.markMentionAsFailed>(),
 }));
 
-const profile = vi.hoisted(() => ({ did: 'did:plc:swearer' }));
+const profile = vi.hoisted(() => ({ handle: 'swearer.bsky.social' }));
 
 vi.mock(import('../../src/services/database.js'), () => db);
 vi.mock(import('../../src/services/logger.js'), () => ({
@@ -29,7 +31,8 @@ vi.mock(import('../../src/services/logger.js'), () => ({
 vi.mock(import('../../src/services/bluesky.js'), async (importOriginal) => ({
   ...(await importOriginal()),
   getProfile: vi.fn<typeof Bsky.getProfile>(
-    async () => ({ did: profile.did }) as AppBskyActorDefs.ProfileViewDetailed,
+    async () =>
+      ({ did: 'did:plc:swearer', handle: profile.handle }) as AppBskyActorDefs.ProfileViewDetailed,
   ),
   getPost: vi.fn<typeof Bsky.getPost>(async () => ({
     uri: 'at://did:plc:someone/app.bsky.feed.post/abc',
@@ -49,6 +52,8 @@ const PAGE_SIZE = 100;
 const makeMention = (id: string): Mention => ({
   id,
   userHandle: HANDLE,
+  did: 'did:plc:swearer',
+  lastError: null,
   postId: id,
   postUrl: `at://did:plc:someone/app.bsky.feed.post/${id}`,
   isReply: false,
@@ -106,7 +111,7 @@ describe('processUnanalyzedMentions for someone we analyzed before', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-07-15T12:00:00Z') });
-    profile.did = 'did:plc:swearer';
+    profile.handle = 'swearer.bsky.social';
     stored = null;
     db.findAnalysis.mockImplementation(async () => stored);
     db.createOrUpdateAnalysis.mockImplementation(async (data) => {
@@ -151,10 +156,12 @@ describe('processUnanalyzedMentions for someone we analyzed before', () => {
       },
     },
     {
-      when: 'the handle belongs to a different account now',
+      when: 'the stored checkpoint has no proven DID',
       change: () => {
         vi.advanceTimersByTime(ANALYSIS_CACHE_TTL_MS + 1);
-        profile.did = 'did:plc:someone-else';
+        if (stored) {
+          (stored.profanityDetails as Db.ProfanityDetails).did = undefined;
+        }
       },
     },
   ])('counts their whole year again when $when', async ({ change }) => {

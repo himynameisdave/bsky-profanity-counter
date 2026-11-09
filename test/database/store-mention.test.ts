@@ -20,6 +20,7 @@ describe(storeMention, () => {
 
   it('upserts on postId so replaying a notification cannot create a second row', async () => {
     const mention = {
+      did: 'did:plc:someone',
       userHandle: 'someone.bsky.social',
       postId: 'abc123',
       postUrl: 'at://did:plc:someone/app.bsky.feed.post/abc123',

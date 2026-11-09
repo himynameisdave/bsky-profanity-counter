@@ -62,17 +62,20 @@ describe('Profile Updater', () => {
       db.getTotalProfanityCount.mockResolvedValue(1234);
     });
 
-    it('leaves out whichever account the bot is logged in as', async () => {
-      const agent = {
-        session: { handle: 'counter.example.com', did: 'did:plc:counter' },
-        upsertProfile: vi.fn<BskyAgent['upsertProfile']>(),
-      } as unknown as BskyAgent;
+    it.each(['counter.example.com', 'renamed.example.com'])(
+      'excludes the bot DID after renaming to %s',
+      async (handle) => {
+        const agent = {
+          session: { handle, did: 'did:plc:counter' },
+          upsertProfile: vi.fn<BskyAgent['upsertProfile']>(),
+        } as unknown as BskyAgent;
 
-      await updateProfileDescription(agent);
+        await updateProfileDescription(agent);
 
-      expect(db.getTotalProfanityCount).toHaveBeenCalledExactlyOnceWith({
-        excludeHandle: 'counter.example.com',
-      });
-    });
+        expect(db.getTotalProfanityCount).toHaveBeenCalledExactlyOnceWith({
+          excludeDid: 'did:plc:counter',
+        });
+      },
+    );
   });
 });

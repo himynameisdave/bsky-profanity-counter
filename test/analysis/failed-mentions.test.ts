@@ -1,3 +1,4 @@
+import { XRPCError } from '@atproto/api';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AppBskyActorDefs, AppBskyFeedDefs, BskyAgent } from '@atproto/api';
 import type { Analysis, Mention } from '@prisma/client';
@@ -11,6 +12,8 @@ const db = vi.hoisted(() => ({
   findAnalysis: vi.fn<typeof Db.findAnalysis>(),
   createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
   markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
+  recordMentionError: vi.fn<typeof Db.recordMentionError>(),
+  refreshTargetHandle: vi.fn<typeof Db.refreshTargetHandle>(),
   markMentionAsFailed: vi.fn<typeof Db.markMentionAsFailed>(),
 }));
 
@@ -62,6 +65,8 @@ const failNextReply = () => bsky.replyToPost.mockRejectedValueOnce(new Error('Up
 const makeMention = (overrides: Partial<Mention>): Mention => ({
   id: 'mention',
   userHandle: 'someone.bsky.social',
+  did: `did:plc:${overrides.userHandle ?? 'someone.bsky.social'}`,
+  lastError: null,
   postId: 'abc',
   postUrl: 'at://did:plc:someone/app.bsky.feed.post/abc',
   isReply: false,
@@ -107,14 +112,22 @@ const useMentionTable = (mentions: Mention[]) => {
     row.status = 'DONE';
     return { ...row };
   });
-  db.markMentionAsFailed.mockImplementation(async (mentionId) => {
+  db.markMentionAsFailed.mockImplementation(async (mentionId, lastError) => {
     const row = find(mentionId);
     row.status = 'FAILED';
+    row.lastError = lastError;
+    return { ...row };
+  });
+
+  db.recordMentionError.mockImplementation(async (id, lastError) => {
+    const row = find(id);
+    row.lastError = lastError;
     return { ...row };
   });
 
   return {
     statusOf: (id: string) => find(id).status,
+    errorOf: (id: string) => find(id).lastError,
     // What resetStuckMentions does at the start of the next run
     startNextRun: () => {
       for (const row of rows) {
@@ -134,8 +147,8 @@ describe(processUnanalyzedMentions, () => {
     db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' } as Analysis);
 
     bsky.getProfile.mockImplementation(
-      async (_agent, handle) =>
-        ({ did: `did:plc:${handle}` }) as AppBskyActorDefs.ProfileViewDetailed,
+      async (_agent, did) =>
+        ({ did, handle: did.slice('did:plc:'.length) }) as AppBskyActorDefs.ProfileViewDetailed,
     );
     bsky.getUserPosts.mockImplementation(async (_agent, did) => {
       if (did === `did:plc:${BROKEN_HANDLE}`) {
@@ -320,6 +333,51 @@ describe(processUnanalyzedMentions, () => {
     expect(logger.error).toHaveBeenCalledWith(
       expect.stringContaining('Output/feed/13/post/embed/record/embeds/0/alt is too long'),
     );
+  });
+
+  it.each([
+    ['rate limit', new XRPCError(429, 'RateLimitExceeded', 'Slow down')],
+    ['server failure', new XRPCError(503, 'UpstreamFailure', 'Try later')],
+    ['network failure', new Error('Network disconnected')],
+  ])('persists a %s and retries it', async (_name, error) => {
+    const table = useMentionTable([makeMention({ id: 'retryable' })]);
+    bsky.getProfile.mockRejectedValueOnce(error);
+    await processUnanalyzedMentions(agent);
+    expect(table.statusOf('retryable')).toBe('ANALYZING');
+    expect(table.errorOf('retryable')).toBe(error.message);
+    table.startNextRun();
+    await processUnanalyzedMentions(agent);
+    expect(table.statusOf('retryable')).toBe('DONE');
+    expect(table.errorOf('retryable')).toBe(error.message);
+  });
+
+  it.each([
+    'BlockedActor',
+    'BlockedByActor',
+    'AccountDeactivated',
+    'ActorNotFound',
+    'InvalidRecord',
+  ])('immediately fails a terminal %s and never claims it again', async (code) => {
+    const table = useMentionTable([
+      makeMention({ id: 'terminal' }),
+      makeMention({ id: 'healthy' }),
+    ]);
+    bsky.getProfile.mockRejectedValueOnce(new XRPCError(400, code, code));
+    await processUnanalyzedMentions(agent);
+    expect(table.statusOf('terminal')).toBe('FAILED');
+    expect(table.errorOf('terminal')).toBe(code);
+    expect(table.statusOf('healthy')).toBe('DONE');
+    table.startNextRun();
+    await processUnanalyzedMentions(agent);
+    expect(bsky.getProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it('quarantines a legacy mention with no trustworthy target DID', async () => {
+    const table = useMentionTable([makeMention({ id: 'unknown', did: null })]);
+    await processUnanalyzedMentions(agent);
+    expect(table.statusOf('unknown')).toBe('FAILED');
+    expect(table.errorOf('unknown')).toContain('Missing trustworthy target DID');
+    expect(bsky.getProfile).not.toHaveBeenCalled();
   });
 
   it('marks a mention done without replying when its post has been deleted', async () => {

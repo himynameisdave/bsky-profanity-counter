@@ -23,7 +23,8 @@ enum MentionStatus {
 
 model Mention {
   id            String        @id @default(cuid())
-  userHandle    String        // The handle of the user to analyze
+  did           String?       // Target identity; null only for quarantined legacy mentions
+  userHandle    String        // Display only; never resolve this to choose a target
   postId        String        // The ID of the post containing the mention
   postUrl       String        // URL to the post
   isReply       Boolean       // Whether it's a reply or direct mention
@@ -35,6 +36,7 @@ model Mention {
   // When we first started processing it. The retry window runs from here, so
   // time spent waiting in the queue doesn't count against it.
   firstAttemptedAt DateTime?
+  lastError     String?
   replyPostId   String?       // The ID of our reply post (if we've replied)
   replyUrl      String?       // URL to our reply
   createdAt     DateTime      @default(now())
@@ -47,11 +49,13 @@ model Mention {
   // One row per mentioning post, so replaying a notification can't create a
   // duplicate (and get the user two replies)
   @@unique([postId])
+  @@index([status, createdAt])
 }
 
 model Analysis {
   id                String    @id @default(cuid())
-  userHandle        String    @unique  // The handle of the analyzed user
+  did               String?   @unique // Null means archived/unproven; excluded from caches and totals
+  userHandle        String    // Display only; several accounts may have used this handle
   totalPosts        Int       // Total posts analyzed
   profanityCount    Int       // Count of profanity instances
   profanityDetails  Json      // Store all profanity details including top ones
