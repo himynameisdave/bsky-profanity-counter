@@ -192,13 +192,17 @@ async function processMention(agent: BskyAgent, mention: Mention) {
     }
   } catch (error) {
     const lastError = describeError(error);
+    logger.error(
+      `❌ Attempt ${mention.attempts} at mention ${mention.id} for ${mention.userHandle} failed: ${lastError}`,
+    );
     try {
       if (isTerminalMentionError(error)) {
         await db.markMentionAsFailed(mention.id, lastError);
+        // Counted once: it won't be retried, so it isn't also a failure
         stats.gaveUp++;
-      } else {
-        await db.recordMentionError(mention.id, lastError);
+        return;
       }
+      await db.recordMentionError(mention.id, lastError);
     } catch (recordError) {
       logger.error(
         `❌ Could not record error for mention ${mention.id}: ${describeError(recordError)}`,
@@ -207,9 +211,6 @@ async function processMention(agent: BskyAgent, mention: Mention) {
     // Retryable failures stay ANALYZING. The rest of this run moves on past it, and
     // resetStuckMentions puts it back in the queue for a later run, which
     // decides whether it still has retries left (see hasExhaustedRetries)
-    logger.error(
-      `❌ Attempt ${mention.attempts} at mention ${mention.id} for ${mention.userHandle} failed: ${describeError(error)}`,
-    );
     stats.failed++;
   }
 }

@@ -474,10 +474,14 @@ describe(processUnanalyzedMentions, () => {
 
   it('quarantines a legacy mention with no trustworthy target DID', async () => {
     const table = useMentionTable([makeMention({ id: 'unknown', did: null })]);
+    const before = { ...stats };
     await processUnanalyzedMentions(agent);
     expect(table.statusOf('unknown')).toBe('FAILED');
     expect(table.errorOf('unknown')).toContain('Missing trustworthy target DID');
     expect(bsky.getProfile).not.toHaveBeenCalled();
+    // Counted once, as given up on, not also as failed and retried later
+    expect(stats.gaveUp - before.gaveUp).toBe(1);
+    expect(stats.failed - before.failed).toBe(0);
   });
 
   it('marks a mention done without replying when its post has been deleted', async () => {
