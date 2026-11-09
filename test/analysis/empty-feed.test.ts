@@ -10,7 +10,7 @@ import type * as Bsky from '../../src/services/bluesky.js';
 const db = vi.hoisted(() => ({
   getUnprocessedMentionsCount: vi.fn<typeof Db.getUnprocessedMentionsCount>(),
   getUnprocessedMention: vi.fn<typeof Db.getUnprocessedMention>(),
-  findFreshAnalysis: vi.fn<typeof Db.findFreshAnalysis>(),
+  findAnalysis: vi.fn<typeof Db.findAnalysis>(),
   createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
   markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
   markMentionAsFailed: vi.fn<typeof Db.markMentionAsFailed>(),
@@ -80,7 +80,7 @@ describe('processUnanalyzedMentions for a target with no posts in the last year'
     vi.clearAllMocks();
 
     let stored: Analysis | null = null;
-    db.findFreshAnalysis.mockImplementation(async () => stored);
+    db.findAnalysis.mockImplementation(async () => stored);
     db.createOrUpdateAnalysis.mockImplementation(async (data) => {
       const now = new Date();
       stored = { id: 'analysis', ...data, lastAnalyzedAt: now, createdAt: now, updatedAt: now };

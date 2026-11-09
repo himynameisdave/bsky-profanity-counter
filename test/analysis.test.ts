@@ -9,7 +9,7 @@ import { WHIMSICAL_RESPONSES } from '../src/services/self-targeting.js';
 const db = vi.hoisted(() => ({
   getUnprocessedMentionsCount: vi.fn<typeof Db.getUnprocessedMentionsCount>(),
   getUnprocessedMention: vi.fn<typeof Db.getUnprocessedMention>(),
-  findFreshAnalysis: vi.fn<typeof Db.findFreshAnalysis>(),
+  findAnalysis: vi.fn<typeof Db.findAnalysis>(),
   createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
   markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
 }));
@@ -17,6 +17,7 @@ const db = vi.hoisted(() => ({
 const bsky = vi.hoisted(() => ({
   getProfile: vi.fn<typeof Bsky.getProfile>(),
   getUserPosts: vi.fn<typeof Bsky.getUserPosts>(),
+  getFeedCheckpoint: vi.fn<typeof Bsky.getFeedCheckpoint>(),
   getPost: vi.fn<typeof Bsky.getPost>(),
   replyToPost: vi.fn<typeof Bsky.replyToPost>(),
 }));
@@ -29,6 +30,7 @@ vi.mock(import('../src/services/profanity.js'), () => ({
     wordCounts: {},
     topThree: [],
     postCount: 1,
+    days: {},
   })),
   generateResponseMessage: vi.fn<typeof Profanity.generateResponseMessage>(() => 'Squeaky clean!'),
 }));
@@ -84,7 +86,7 @@ describe('processUnanalyzedMentions when someone asks the bot to audit itself', 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    db.findFreshAnalysis.mockResolvedValue(null);
+    db.findAnalysis.mockResolvedValue(null);
     db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' } as Analysis);
     bsky.getProfile.mockImplementation(
       async (_agent, handle) =>
@@ -118,6 +120,10 @@ describe('processUnanalyzedMentions when someone asks the bot to audit itself', 
     await processUnanalyzedMentions(agent);
 
     expect(repliedWith()).toBe('Squeaky clean!');
-    expect(bsky.getUserPosts).toHaveBeenCalledWith(agent, 'did:plc:profanity.accountant');
+    expect(bsky.getUserPosts).toHaveBeenCalledWith(
+      agent,
+      'did:plc:profanity.accountant',
+      undefined,
+    );
   });
 });

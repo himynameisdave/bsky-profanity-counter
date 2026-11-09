@@ -17,6 +17,10 @@ export const MAX_POSTS = 25_000;
 // How long an analysis gets reused before we count someone's posts again
 export const ANALYSIS_CACHE_TTL_MS = 24 * HOUR_MS;
 
+// Counting someone again normally just adds their posts since last time. Every
+// so often we recount their whole year instead, to catch posts they've deleted.
+export const FULL_RECOUNT_INTERVAL_MS = 30 * 24 * HOUR_MS;
+
 // A mention left ANALYZING for this long belongs to a run that died partway
 // through, so it goes back in the queue. Keep it longer than a run can last
 // (the scheduled workflow's timeout is 15 minutes).

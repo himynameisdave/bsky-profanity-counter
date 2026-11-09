@@ -8,7 +8,7 @@ import type * as Profanity from '../../src/services/profanity.js';
 const db = vi.hoisted(() => ({
   getUnprocessedMentionsCount: vi.fn<typeof Db.getUnprocessedMentionsCount>(),
   getUnprocessedMention: vi.fn<typeof Db.getUnprocessedMention>(),
-  findFreshAnalysis: vi.fn<typeof Db.findFreshAnalysis>(),
+  findAnalysis: vi.fn<typeof Db.findAnalysis>(),
   createOrUpdateAnalysis: vi.fn<typeof Db.createOrUpdateAnalysis>(),
   markMentionAsDone: vi.fn<typeof Db.markMentionAsDone>(),
   markMentionAsFailed: vi.fn<typeof Db.markMentionAsFailed>(),
@@ -17,6 +17,7 @@ const db = vi.hoisted(() => ({
 const bsky = vi.hoisted(() => ({
   getProfile: vi.fn<typeof Bsky.getProfile>(),
   getUserPosts: vi.fn<typeof Bsky.getUserPosts>(),
+  getFeedCheckpoint: vi.fn<typeof Bsky.getFeedCheckpoint>(),
   getPost: vi.fn<typeof Bsky.getPost>(),
   replyToPost: vi.fn<typeof Bsky.replyToPost>(),
   findOwnReply: vi.fn<typeof Bsky.findOwnReply>(),
@@ -38,6 +39,7 @@ vi.mock(import('../../src/services/profanity.js'), () => ({
     wordCounts: {},
     topThree: [],
     postCount: 1,
+    days: {},
   })),
   generateResponseMessage: vi.fn<typeof Profanity.generateResponseMessage>(() => 'Squeaky clean!'),
 }));
@@ -128,7 +130,7 @@ describe(processUnanalyzedMentions, () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    db.findFreshAnalysis.mockResolvedValue(null);
+    db.findAnalysis.mockResolvedValue(null);
     db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' } as Analysis);
 
     bsky.getProfile.mockImplementation(

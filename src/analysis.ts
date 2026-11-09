@@ -1,5 +1,5 @@
 import type { BskyAgent } from '@atproto/api';
-import type { Mention } from '@prisma/client';
+import type { Analysis, Mention } from '@prisma/client';
 import * as db from './services/database.js';
 import * as bsky from './services/bluesky.js';
 import * as profanity from './services/profanity.js';
@@ -8,6 +8,7 @@ import { handleSelfTargeting } from './services/self-targeting.js';
 import { replyToMention } from './services/reply.js';
 import { describeError } from './errors.js';
 import { stats } from './run-stats.js';
+import { ANALYSIS_CACHE_TTL_MS, FULL_RECOUNT_INTERVAL_MS, MAX_POSTS } from './config.js';
 import type { ProfanityDetails } from './services/database.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -35,6 +36,29 @@ function hasExhaustedRetries(mention: Mention): boolean {
   }
 
   return Date.now() - mention.firstAttemptedAt.getTime() >= MENTION_RETRY_WINDOW_MS;
+}
+
+/**
+ * The details of an earlier analysis we can add someone's new posts to, or
+ * null if we need to count their whole year again.
+ */
+function getRecountBase(existing: Analysis | null, did: string) {
+  const details = existing?.profanityDetails as ProfanityDetails | undefined;
+  if (
+    !existing ||
+    !details?.days ||
+    !details.checkpoint ||
+    !details.fullCountAt ||
+    // The handle belongs to a different account now
+    details.did !== did ||
+    // We stopped at MAX_POSTS, so we never counted their oldest posts in the window
+    existing.totalPosts >= MAX_POSTS ||
+    // Time to catch up on any posts they've deleted
+    Date.now() - Date.parse(details.fullCountAt) >= FULL_RECOUNT_INTERVAL_MS
+  ) {
+    return null;
+  }
+  return details;
 }
 
 /**
@@ -71,55 +95,62 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       return; // Exit early, don't do profanity analysis
     }
 
-    // Check if we have a fresh analysis (see ANALYSIS_CACHE_TTL_MS)
-    const freshAnalysis = await db.findFreshAnalysis(mention.userHandle);
+    const existing = await db.findAnalysis(mention.userHandle);
 
-    if (freshAnalysis) {
+    if (existing && Date.now() - existing.lastAnalyzedAt.getTime() < ANALYSIS_CACHE_TTL_MS) {
       logger.info(`✨ Found freshly cached analysis for ${mention.userHandle}`);
 
       // Generate the response message using the existing analysis
       const responseMessage = profanity.generateResponseMessage(
         {
-          totalCount: freshAnalysis.profanityCount,
-          wordCounts: (freshAnalysis.profanityDetails as ProfanityDetails)?.wordCounts,
-          topThree: (freshAnalysis.profanityDetails as ProfanityDetails)?.topProfanities
+          totalCount: existing.profanityCount,
+          wordCounts: (existing.profanityDetails as ProfanityDetails)?.wordCounts,
+          topThree: (existing.profanityDetails as ProfanityDetails)?.topProfanities
             ?.slice(0, 3)
             .map((p: { word: string; count: number }, i: number) => ({
               word: p.word,
               count: p.count,
               rank: i + 1,
             })),
-          postCount: freshAnalysis.totalPosts,
+          postCount: existing.totalPosts,
         },
         mention.userHandle,
-        freshAnalysis.totalPosts,
+        existing.totalPosts,
       );
 
-      const outcome = await replyToMention(agent, mention, responseMessage, freshAnalysis.id);
+      const outcome = await replyToMention(agent, mention, responseMessage, existing.id);
       stats[outcome]++;
       logger.success(`✅ Used cached analysis for mention for ${mention.userHandle}`);
     } else {
-      // No fresh analysis, need to analyze post history
-      logger.info(`🔍 No cached analysis found for ${mention.userHandle}, fetching posts...`);
-
       // Get the user's profile to get their DID
       const profile = await bsky.getProfile(agent, mention.userHandle);
 
-      // Get the user's posts
-      const posts = await bsky.getUserPosts(agent, profile.did);
+      const previous = getRecountBase(existing, profile.did);
+      logger.info(
+        previous
+          ? `🔍 Adding ${mention.userHandle}'s new posts to their last analysis...`
+          : `🔍 No cached analysis found for ${mention.userHandle}, fetching posts...`,
+      );
+
+      // Just their new posts if we can add them to the last analysis, otherwise their whole year
+      const posts = await bsky.getUserPosts(agent, profile.did, previous?.checkpoint);
 
       // Saved and answered even with no posts, so a quiet account still gets a
       // reply, and a repeat request is served from the cache
-      const analysis = profanity.analyzePosts(posts);
+      const analysis = profanity.analyzePosts(posts, previous?.days);
 
       // Store the analysis in the database
       const dbAnalysis = await db.createOrUpdateAnalysis({
         userHandle: mention.userHandle,
-        totalPosts: posts.length,
+        totalPosts: analysis.postCount,
         profanityCount: analysis.totalCount,
         profanityDetails: {
           wordCounts: analysis.wordCounts,
           topProfanities: analysis.topThree.map((p) => ({ word: p.word, count: p.count })),
+          did: profile.did,
+          days: analysis.days,
+          checkpoint: bsky.getFeedCheckpoint(posts, previous?.checkpoint),
+          fullCountAt: previous?.fullCountAt ?? new Date().toISOString(),
         },
       });
 
@@ -127,12 +158,14 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       const responseMessage = profanity.generateResponseMessage(
         analysis,
         mention.userHandle,
-        posts.length,
+        analysis.postCount,
       );
 
       const outcome = await replyToMention(agent, mention, responseMessage, dbAnalysis.id);
       stats[outcome]++;
-      logger.success(`✅ Analyzed ${posts.length} posts for mention for ${mention.userHandle}`);
+      logger.success(
+        `✅ Analyzed ${posts.length} new posts (${analysis.postCount} in total) for mention for ${mention.userHandle}`,
+      );
     }
   } catch (error) {
     // Leave it ANALYZING. The rest of this run moves on past it, and

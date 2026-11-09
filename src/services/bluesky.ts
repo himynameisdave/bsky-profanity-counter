@@ -8,6 +8,7 @@ import {
 import * as logger from './logger.js';
 import { describeError } from '../errors.js';
 import { BLUESKY_SERVICE, MAX_POSTS } from '../config.js';
+import { getYearCutoff } from './profanity.js';
 import type { BlueskyCredentials } from '../config.js';
 import type { Notification } from '../types.js';
 
@@ -249,17 +250,74 @@ const getPostDate = (post: AppBskyFeedDefs.PostView | undefined): Date | null =>
   return typeof record?.createdAt === 'string' ? new Date(record.createdAt) : null;
 };
 
+/**
+ * Where a post sits in an author feed, in ms since the epoch. Bluesky sorts the
+ * feed by whichever is earlier of when the post says it was written and when it
+ * was indexed (`sortAt` in the appview), not by either one on its own.
+ */
+export const getSortTime = (post: AppBskyFeedDefs.PostView): number => {
+  const indexedAt = Date.parse(post.indexedAt);
+  const createdAt = getPostDate(post)?.getTime() ?? Number.NaN;
+  return Number.isNaN(createdAt) ? indexedAt : Math.min(createdAt, indexedAt);
+};
+
+// Where a count of someone's feed left off: the sort time of the newest post we
+// counted, and every post we counted at exactly that time, since several can share it
+export type FeedCheckpoint = { sortTime: number; uris: string[] };
+
+/**
+ * The checkpoint to save after counting `posts` (newly fetched with `previous`,
+ * if there was one). With no new posts, nothing moved, so it's `previous`.
+ */
+export const getFeedCheckpoint = (
+  posts: AppBskyFeedDefs.PostView[],
+  previous?: FeedCheckpoint,
+): FeedCheckpoint | undefined => {
+  if (posts.length === 0) {
+    return previous;
+  }
+
+  const sortTime = posts.reduce((newest, post) => Math.max(newest, getSortTime(post)), -Infinity);
+  const uris = posts.filter((post) => getSortTime(post) === sortTime).map((post) => post.uri);
+
+  // New posts tied with the old checkpoint join the posts already counted at that time
+  return {
+    sortTime,
+    uris: sortTime === previous?.sortTime ? [...previous.uris, ...uris] : uris,
+  };
+};
+
 // Posts per page of an author feed (the API's limit)
 const FEED_PAGE_SIZE = 100;
 // How many times we'll ask for a single page of a feed before giving up on it
 export const MAX_FEED_PAGE_ATTEMPTS = 3;
 // Wait before the first retry, doubled for each retry after that
 export const FEED_RETRY_BASE_DELAY_MS = 1000;
+// When we're rate limited, we wait until the limit resets, but never longer than this
+export const MAX_RATE_LIMIT_WAIT_MS = 30_000;
 // How long one attempt at a page may take before we abort it. Pages normally
 // come back in well under a second. Even when every attempt times out, giving
-// up on a page takes 3 × 15s plus 3s of backoff, about 48s, well inside the
-// workflow's 15 minute timeout, so the failure is handled before the job is killed.
+// up on a page takes 3 × 15s plus 3s of backoff, about 48s (or about 2 minutes
+// if we're also waiting out a rate limit), well inside the workflow's 15 minute
+// timeout, so the failure is handled before the job is killed.
 export const FEED_PAGE_TIMEOUT_MS = 15_000;
+
+/**
+ * How long to wait before retrying a page. Normally exponential backoff, but a
+ * 429 tells us when the rate limit resets (`ratelimit-reset`, in seconds since
+ * the epoch), and retrying before then just gets another 429.
+ */
+const getRetryDelay = (error: unknown, attempt: number): number => {
+  const backoff = FEED_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1);
+  if (!(error instanceof XRPCError) || error.status !== 429) {
+    return backoff;
+  }
+
+  const untilReset = Number(error.headers?.['ratelimit-reset']) * 1000 - Date.now();
+  return Number.isFinite(untilReset)
+    ? Math.min(Math.max(backoff, untilReset), MAX_RATE_LIMIT_WAIT_MS)
+    : backoff;
+};
 
 /**
  * Fetches one page of an author feed, retrying with backoff if it fails.
@@ -294,7 +352,7 @@ const getAuthorFeedPage = async (
 
       if (attempt < MAX_FEED_PAGE_ATTEMPTS) {
         // oxlint-disable-next-line no-await-in-loop
-        await sleep(FEED_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1));
+        await sleep(getRetryDelay(error, attempt));
       }
     }
   }
@@ -306,23 +364,32 @@ const getAuthorFeedPage = async (
 };
 
 /**
- * Gets a user's posts from the last year, up to MAX_POSTS.
- * Throws if a page of their feed can't be fetched (see getAuthorFeedPage).
+ * Gets a user's posts from the last year (see getYearCutoff), in feed order, up
+ * to MAX_POSTS. Throws if a page of their feed can't be fetched (see getAuthorFeedPage).
+ *
+ * Pass `since` (where the last count left off, see getFeedCheckpoint) to only
+ * get the posts after it. The feed is sorted newest first, so we stop paging at
+ * the first post sorted before the checkpoint, which is usually on the first page.
  */
 export const getUserPosts = async (
   agent: BskyAgent,
   did: string,
+  since?: FeedCheckpoint,
 ): Promise<AppBskyFeedDefs.PostView[]> => {
   const allPosts: AppBskyFeedDefs.PostView[] = [];
   let cursor: string | undefined;
-  const ONE_YEAR_AGO = new Date();
-  ONE_YEAR_AGO.setFullYear(ONE_YEAR_AGO.getFullYear() - 1);
+  const ONE_YEAR_AGO = getYearCutoff();
 
-  logger.info(`🔍 Getting posts for ${did} (up to ${MAX_POSTS} posts from the last year)...`);
+  logger.info(
+    since
+      ? `🔍 Getting posts for ${did} since ${new Date(since.sortTime).toISOString()}...`
+      : `🔍 Getting posts for ${did} (up to ${MAX_POSTS} posts from the last year)...`,
+  );
 
   let chunkCount = 0;
   let oldestPostDate = new Date();
   let reachedYearOld = false;
+  let reachedSeen = false;
 
   // Fetch posts in batches until we hit the max, reach a year old posts, or there are no more
   while (allPosts.length < MAX_POSTS && !reachedYearOld) {
@@ -332,7 +399,7 @@ export const getUserPosts = async (
     // oxlint-disable-next-line no-await-in-loop
     const response = await getAuthorFeedPage(agent, did, cursor, chunkCount);
 
-    const posts = response.data.feed.reduce((acc, item) => {
+    let posts = response.data.feed.reduce((acc, item) => {
       // Only include items that are not reposts
       if (!item.reason) {
         acc.push(item.post);
@@ -354,6 +421,18 @@ export const getUserPosts = async (
 
     // Check the date of the last post in this chunk
     const lastPostDate = getPostDate(posts[posts.length - 1]);
+
+    if (since) {
+      // Sorted before the checkpoint means everything after it on the feed is too
+      reachedSeen = getSortTime(posts[posts.length - 1]) < since.sortTime;
+      posts = posts.filter((post) => {
+        const sortTime = getSortTime(post);
+        return (
+          sortTime > since.sortTime ||
+          (sortTime === since.sortTime && !since.uris.includes(post.uri))
+        );
+      });
+    }
 
     if (lastPostDate) {
       oldestPostDate = lastPostDate;
@@ -383,6 +462,11 @@ export const getUserPosts = async (
     logger.info(
       `✅ Processed chunk #${chunkCount}: Added ${posts.length} posts (total: ${allPosts.length})`,
     );
+
+    if (reachedSeen) {
+      logger.info(`🔍 Reached posts we've already counted`);
+      break;
+    }
 
     // Break if no cursor for next page
     if (!response.data.cursor) {
