@@ -95,9 +95,6 @@ All three are required. The bot refuses to start, and names whichever are missin
 
 ## Deployment
 
-For the `Mention.postUrl` unique-index change, follow the ordered commands in
-[the #11 rollout](docs/issue-11-rollout.md) before resuming ingestion.
-
 The bot runs on GitHub Actions. To deploy your own:
 
 1. Fork this repository
