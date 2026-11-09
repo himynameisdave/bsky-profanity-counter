@@ -63,7 +63,7 @@ describe('Profile Updater', () => {
     });
 
     it.each(['counter.example.com', 'renamed.example.com'])(
-      'excludes the bot DID after renaming to %s',
+      'excludes the bot DID and current handle after renaming to %s',
       async (handle) => {
         const agent = {
           session: { handle, did: 'did:plc:counter' },
@@ -74,6 +74,7 @@ describe('Profile Updater', () => {
 
         expect(db.getTotalProfanityCount).toHaveBeenCalledExactlyOnceWith({
           excludeDid: 'did:plc:counter',
+          excludeHandle: handle,
         });
       },
     );

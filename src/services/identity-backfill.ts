@@ -1,5 +1,8 @@
 import type { Analysis, Mention, Prisma } from '@prisma/client';
 
+/** Archived because another analysis of the same DID was kept instead. */
+export const DUPLICATE_SNAPSHOT_REASON = 'Duplicate DID snapshot';
+
 const isDid = (value: unknown): value is string =>
   typeof value === 'string' && /^did:[a-z0-9]+:[a-zA-Z0-9._:%-]+$/u.test(value);
 
@@ -52,7 +55,7 @@ export function planIdentityBackfill(analyses: Analysis[], mentions: Mention[]) 
       (a, b) => b.lastAnalyzedAt.getTime() - a.lastAnalyzedAt.getTime() || a.id.localeCompare(b.id),
     );
     for (const row of duplicates) {
-      quarantine(row, 'Duplicate DID snapshot', canonical.id);
+      quarantine(row, DUPLICATE_SNAPSHOT_REASON, canonical.id);
     }
     analysisUpdates.push({
       id: canonical.id,
