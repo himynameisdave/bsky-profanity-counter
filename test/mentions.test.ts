@@ -102,6 +102,65 @@ describe(storeMentions, () => {
     expect(bsky.markNotificationsAsRead).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    'keeps a failed URI retryable when another repository shares its key (tied timestamps: %s)',
+    async (tied) => {
+      const first = makeMention('3abc', '2026-01-02T00:00:00.000Z');
+      const second: Notification = {
+        ...first,
+        uri: 'at://did:plc:other/app.bsky.feed.post/3abc',
+        author: { ...first.author, did: 'did:plc:other', handle: 'other.bsky.social' },
+        indexedAt: tied ? first.indexedAt : '2026-01-03T00:00:00.000Z',
+      };
+      vi.mocked(db.storeMention).mockImplementation(async ({ postUrl }) => {
+        if (postUrl === second.uri) {
+          throw new Error('insert failed');
+        }
+        return {} as Awaited<ReturnType<typeof Db.storeMention>>;
+      });
+
+      await storeMentions(agent, [second, first], second.indexedAt);
+
+      expect(db.storeMention).toHaveBeenCalledTimes(2);
+      expect(db.storeMention).toHaveBeenCalledWith(
+        expect.objectContaining({ postUrl: second.uri }),
+      );
+      expect(vi.mocked(bsky.markNotificationsAsRead).mock.calls).toStrictEqual(
+        tied ? [] : [[agent, first.indexedAt]],
+      );
+
+      // Retrying the unread batch can persist both URIs before advancing the cursor.
+      vi.mocked(db.storeMention).mockResolvedValue(
+        {} as Awaited<ReturnType<typeof Db.storeMention>>,
+      );
+      vi.mocked(bsky.markNotificationsAsRead).mockClear();
+      await storeMentions(agent, [second, first], second.indexedAt);
+
+      expect(bsky.markNotificationsAsRead).toHaveBeenCalledExactlyOnceWith(agent, second.indexedAt);
+    },
+  );
+
+  it('keeps the cursor behind a failed timestamp even when a tied mention was stored first', async () => {
+    const mentions = [
+      makeMention('older', '2026-01-01T00:00:00.000Z'),
+      makeMention('stored', '2026-01-02T00:00:00.000Z'),
+      makeMention('failed', '2026-01-02T00:00:00.000Z'),
+      makeMention('newer', '2026-01-03T00:00:00.000Z'),
+    ];
+    vi.mocked(db.storeMention).mockResolvedValueOnce(
+      {} as Awaited<ReturnType<typeof Db.storeMention>>,
+    );
+    vi.mocked(db.storeMention).mockResolvedValueOnce(
+      {} as Awaited<ReturnType<typeof Db.storeMention>>,
+    );
+    vi.mocked(db.storeMention).mockRejectedValueOnce(new Error('tied failure'));
+
+    await storeMentions(agent, mentions, mentions[3].indexedAt);
+
+    expect(db.storeMention).toHaveBeenCalledTimes(4);
+    expect(bsky.markNotificationsAsRead).not.toHaveBeenCalled();
+  });
+
   it('still advances the read cursor when the batch had no mentions in it', async () => {
     await storeMentions(agent, [], '2026-01-02T12:00:00.000Z');
 

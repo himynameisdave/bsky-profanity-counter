@@ -13,8 +13,8 @@ type NotificationRecord = { reply?: { parent?: { uri?: string } } };
  * Takes a Bluesky notification and maps it to our database Mention schema structure
  * Fields required by our Prisma Mention model:
  * - userHandle: String (handle of user to analyze)
- * - postId: String (ID of post containing the mention)
- * - postUrl: String (URL to the post)
+ * - postId: String (record key, only unique within its repository and collection)
+ * - postUrl: String (full AT URI, the canonical unique identity)
  * - isReply: Boolean (whether it's a reply or direct mention)
  */
 function notificationToMention(notification: Notification) {
@@ -130,7 +130,7 @@ export default async function storeMentions(
         }
       }
 
-      // Store in database (an upsert, so replaying a notification is a no-op)
+      // Store by full AT URI, so replaying a notification is a no-op
       // oxlint-disable-next-line no-await-in-loop
       await db.storeMention(mentionData);
       stats.stored++;

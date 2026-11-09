@@ -72,6 +72,9 @@ the voice notes below.
    `> [!WARNING]` block listing the exact commands. Any change to `prisma/schema.prisma` counts:
    CI only runs `prisma:generate`, so someone has to run `pnpm db:push` against prod by hand. New env
    vars, GitHub secrets and one-off data fixes count too. No deploy steps, no block.
+   Keep one-off deployment, migration and rollout instructions in the PR description, never in
+   committed docs or README links to rollout docs. Put commands, ordering, conflict handling,
+   verification and rollback details there; executable migration scripts can stay in the codebase.
 2. Then one to three sentences: what it does, starting with a present-tense verb ("Fixes...",
    "Adds..."), and why.
 3. A few bullets for anything a reviewer would miss in the diff, only if needed. Don't walk through
