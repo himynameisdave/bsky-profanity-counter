@@ -25,8 +25,8 @@ model Mention {
   id            String        @id @default(cuid())
   did           String?       // Target identity; null only for quarantined legacy mentions
   userHandle    String        // Display only; never resolve this to choose a target
-  postId        String        // The ID of the post containing the mention
-  postUrl       String        // URL to the post
+  postId        String        // The record key, scoped to its repository and collection
+  postUrl       String        // The full AT URI of the mentioning post
   isReply       Boolean       // Whether it's a reply or direct mention
   status        MentionStatus @default(UNPROCESSED)
   // How many times we've started processing it. Counted when it's claimed, so
@@ -48,7 +48,7 @@ model Mention {
 
   // One row per mentioning post, so replaying a notification can't create a
   // duplicate (and get the user two replies)
-  @@unique([postId])
+  @@unique([postUrl])
   @@index([status, createdAt])
 }
 

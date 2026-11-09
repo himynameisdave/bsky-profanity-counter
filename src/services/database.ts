@@ -29,9 +29,9 @@ const prisma = new PrismaClient();
 /**
  * Store a new mention from a notification.
  *
- * Upserts on the unique postId so that replaying the same notification (a crash
- * between storing and marking it read, or two overlapping runs) yields one row
- * and one reply, and never resets a mention we've already replied to.
+ * The full AT URI is the identity; record keys can repeat across repositories.
+ * INSERT ON CONFLICT DO NOTHING lets the database arbitrate concurrent stores,
+ * without touching any state or metadata on a replay (including updatedAt).
  */
 export async function storeMention({
   did,
@@ -46,11 +46,9 @@ export async function storeMention({
   postUrl: string;
   isReply: boolean;
 }) {
-  return prisma.mention.upsert({
-    where: { postId },
-    // We've already recorded this one, leave its status and reply alone
-    update: {},
-    create: {
+  await prisma.mention.createMany({
+    skipDuplicates: true,
+    data: {
       did,
       userHandle,
       postId,
@@ -59,6 +57,10 @@ export async function storeMention({
       // Status defaults to UNPROCESSED
     },
   });
+
+  // Read after the atomic insert, never check before inserting. Throw if the
+  // URI wasn't stored, so ingestion cannot advance its cursor on a false success.
+  return prisma.mention.findUniqueOrThrow({ where: { postUrl } });
 }
 
 /**
