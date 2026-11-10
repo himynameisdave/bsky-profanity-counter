@@ -61,43 +61,39 @@ describe('getMentions', () => {
     vi.clearAllMocks();
   });
 
-  it('stops paginating after the first fully-read page', async () => {
+  it('returns a bookmark without fetching the next page before this one is stored', async () => {
     const { agent, listNotifications } = makeAgent([
-      // Page 1: something unread, so we keep going
-      [
-        makeNotification({
-          uri: 'at://did:plc:a/app.bsky.feed.post/1',
-          indexedAt: hoursAgo(1),
-        }),
-        makeNotification({
-          uri: 'at://did:plc:a/app.bsky.feed.post/2',
-          indexedAt: hoursAgo(2),
-          isRead: true,
-        }),
-      ],
-      // Page 2: entirely read, so page 3 should never be requested
-      [
-        makeNotification({
-          uri: 'at://did:plc:a/app.bsky.feed.post/3',
-          indexedAt: hoursAgo(3),
-          isRead: true,
-        }),
-      ],
-      // Page 3: unread, but older than a page we've already read through
-      [
-        makeNotification({
-          uri: 'at://did:plc:a/app.bsky.feed.post/4',
-          indexedAt: hoursAgo(4),
-        }),
-      ],
+      [makeNotification({ indexedAt: hoursAgo(1) })],
+      [makeNotification({ indexedAt: hoursAgo(2) })],
     ]);
 
-    const { mentions } = await getMentions(agent);
+    const page = await getMentions(agent);
 
-    expect(listNotifications).toHaveBeenCalledTimes(2);
-    expect(mentions.map((mention) => mention.uri)).toStrictEqual([
-      'at://did:plc:a/app.bsky.feed.post/1',
+    expect(listNotifications).toHaveBeenCalledOnce();
+    expect(page.nextCursor).toBe('1');
+    expect(page.mentions).toHaveLength(1);
+  });
+
+  it('finishes at a fully-read page', async () => {
+    const { agent } = makeAgent([
+      [makeNotification({ isRead: true })],
+      [makeNotification({ isRead: true })],
     ]);
+
+    const page = await getMentions(agent);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it('resumes at the supplied cursor', async () => {
+    const older = makeNotification({ uri: 'at://did:plc:a/app.bsky.feed.post/older' });
+    const { agent, listNotifications } = makeAgent([[makeNotification({})], [older]]);
+
+    const page = await getMentions(agent, '1');
+    expect(page.mentions).toStrictEqual([older]);
+    expect(listNotifications).toHaveBeenCalledExactlyOnceWith(
+      { cursor: '1', limit: 100 },
+      expect.anything(),
+    );
   });
 
   it('derives latestIndexedAt from the newest notification actually fetched', async () => {
@@ -136,42 +132,23 @@ describe('getMentions', () => {
     ]);
   });
 
-  it('stops paginating once notifications are older than the lookback window', async () => {
-    const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { agent, listNotifications } = makeAgent([
-      [makeNotification({ uri: 'at://did:plc:a/app.bsky.feed.post/old', indexedAt: longAgo })],
-      [makeNotification({ uri: 'at://did:plc:a/app.bsky.feed.post/older', indexedAt: longAgo })],
-    ]);
-
-    await getMentions(agent);
-
-    expect(listNotifications).toHaveBeenCalledOnce();
-  });
-
-  it('warns when it stops paging with unread notifications possibly left behind', async () => {
+  it('keeps an unread backlog eligible even when it is older than seven days', async () => {
     const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const { agent } = makeAgent([
-      [makeNotification({ indexedAt: longAgo }), makeNotification({ indexedAt: longAgo })],
+      [makeNotification({ indexedAt: longAgo })],
       [makeNotification({ indexedAt: longAgo })],
     ]);
 
-    await getMentions(agent);
+    const page = await getMentions(agent);
 
-    expect(logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining('with 2 unread notifications on the last one'),
-    );
+    expect(page.mentions).toHaveLength(1);
+    expect(page.nextCursor).toBe('1');
   });
 
-  it("doesn't warn when it stops at a page that was entirely read", async () => {
-    const { agent } = makeAgent([
-      [makeNotification({ indexedAt: hoursAgo(1) })],
-      [makeNotification({ indexedAt: hoursAgo(2), isRead: true })],
-      [makeNotification({ indexedAt: hoursAgo(3) })],
-    ]);
-
-    await getMentions(agent);
-
-    expect(logger.warn).not.toHaveBeenCalled();
+  it('follows an empty page when the API supplies another cursor', async () => {
+    const { agent } = makeAgent([[], [makeNotification({})]]);
+    const page = await getMentions(agent);
+    expect(page.nextCursor).toBe('1');
   });
 
   it('reports nothing to mark as read when there are no notifications', async () => {
@@ -243,6 +220,30 @@ describe('getMentions with notifications Bluesky serves but the lexicon rejects'
     );
   });
 
+  it.each([false, true])(
+    'keeps the next page when filtering leaves only read notifications (empty: %s)',
+    async (empty) => {
+      const agent = makeRealAgent(() => ({
+        status: 200,
+        body: {
+          notifications: [
+            {
+              ...validNotification('bad'),
+              author: { ...validNotification('bad').author, displayName: 'x'.repeat(65) },
+            },
+            ...(empty ? [] : [{ ...validNotification('read'), isRead: true }]),
+          ],
+          cursor: 'older-page',
+        },
+      }));
+
+      const page = await getMentions(agent);
+
+      expect(page.mentions).toStrictEqual([]);
+      expect(page.nextCursor).toBe('older-page');
+    },
+  );
+
   it('still throws on errors that are not about validation', async () => {
     const agent = makeRealAgent(() => ({
       status: 500,
@@ -250,6 +251,15 @@ describe('getMentions with notifications Bluesky serves but the lexicon rejects'
     }));
 
     await expect(getMentions(agent)).rejects.toThrow('Internal Server Error');
+  });
+
+  it('does not treat an invalid pagination cursor as the end of the inbox', async () => {
+    const agent = makeRealAgent(() => ({
+      status: 200,
+      body: { notifications: [validNotification('good')], cursor: 123 },
+    }));
+
+    await expect(getMentions(agent)).rejects.toThrow('invalid response');
   });
 });
 

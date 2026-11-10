@@ -79,19 +79,14 @@ export const createAgent = async ({
   return agent;
 };
 
-// Most pages of notifications we're willing to walk in a single run
-const MAX_NOTIFICATION_PAGES = 25;
-// Belt-and-suspenders cutoff, in case we never hit a fully-read page
-const NOTIFICATION_LOOKBACK_DAYS = 7;
 const NOTIFICATIONS_PER_PAGE = 100;
 
-export type MentionsBatch = {
-  // The unread mentions we still owe a reply to
+export type MentionsPage = {
   mentions: Notification[];
-  // The `indexedAt` of the newest notification in the batch we actually fetched.
-  // This is what `seenAt` should be derived from — see markNotificationsAsRead.
-  // `null` when there was nothing to fetch.
+  // The newest validated notification on this page, including likes/follows.
   latestIndexedAt: string | null;
+  // Null means we reached the end or a wholly read page, not a per-run limit.
+  nextCursor: string | null;
 };
 
 const toTime = (indexedAt: string) => Date.parse(indexedAt);
@@ -109,7 +104,7 @@ const toTime = (indexedAt: string) => Date.parse(indexedAt);
 const getNotificationsPage = async (
   agent: BskyAgent,
   cursor: string | undefined,
-): Promise<{ notifications: Notification[]; cursor?: string }> => {
+): Promise<{ notifications: Notification[]; cursor?: string; skippedInvalid?: boolean }> => {
   try {
     const response = await withTimeout(REQUEST_TIMEOUT_MS, (signal) =>
       agent.listNotifications({ limit: NOTIFICATIONS_PER_PAGE, cursor }, { signal }),
@@ -124,6 +119,10 @@ const getNotificationsPage = async (
         : undefined;
 
     if (!Array.isArray(body?.notifications)) {
+      throw error;
+    }
+    // An invalid cursor is not evidence that this is the last page.
+    if (body.cursor !== undefined && typeof body.cursor !== 'string') {
       throw error;
     }
 
@@ -142,95 +141,43 @@ const getNotificationsPage = async (
 
     return {
       notifications,
+      skippedInvalid: notifications.length !== body.notifications.length,
       cursor: typeof body.cursor === 'string' ? body.cursor : undefined,
     };
   }
 };
 
-// Get notifications where the bot is mentioned
-export const getMentions = async (agent: BskyAgent): Promise<MentionsBatch> => {
-  logger.info('🔍 Getting notifications...');
-
-  const cutoff = Date.now() - NOTIFICATION_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
-  const mentions: Notification[] = [];
+/**
+ * Fetch one page. Collection checkpoints each page before asking for the next.
+ * There is no age cutoff: an old unread mention still needs an answer.
+ */
+export const getMentions = async (agent: BskyAgent, cursor?: string): Promise<MentionsPage> => {
+  const {
+    notifications,
+    cursor: nextCursor,
+    skippedInvalid,
+  } = await getNotificationsPage(agent, cursor);
   let latestIndexedAt: string | null = null;
-  let fetchedCount = 0;
-  let cursor: string | undefined;
-  let page = 0;
-  let keepPaging = true;
-  let stoppedEarly = false;
-  let unreadOnLastPage = 0;
-
-  // Notifications come back newest-first, so we only page far enough back to
-  // cover everything that is still unread — not the account's whole history.
-  while (keepPaging && page < MAX_NOTIFICATION_PAGES) {
-    page++;
-
-    // Pagination is inherently sequential: each request needs the previous cursor
-    // oxlint-disable-next-line no-await-in-loop
-    const response = await getNotificationsPage(agent, cursor);
-
-    const { notifications } = response;
-
-    if (notifications.length === 0) {
-      keepPaging = false;
-      break;
-    }
-
-    fetchedCount += notifications.length;
-
-    for (const notification of notifications) {
-      if (!latestIndexedAt || toTime(notification.indexedAt) > toTime(latestIndexedAt)) {
-        latestIndexedAt = notification.indexedAt;
-      }
-
-      if (notification.reason === 'mention' && !notification.isRead) {
-        mentions.push(notification);
-      }
-    }
-
-    const oldestOnPage = notifications[notifications.length - 1];
-    unreadOnLastPage = notifications.filter((notification) => !notification.isRead).length;
-
-    if (unreadOnLastPage === 0) {
-      // Everything on this page has been read, so everything older has been too
-      logger.info(`🛑 Stopping after page #${page}: it was entirely read`);
-      keepPaging = false;
-    } else if (toTime(oldestOnPage.indexedAt) < cutoff) {
-      stoppedEarly = response.cursor !== undefined;
-      logger.info(
-        `🕒 Stopping after page #${page}: reached notifications older than ${NOTIFICATION_LOOKBACK_DAYS} days`,
-      );
-      keepPaging = false;
-    } else if (response.cursor) {
-      ({ cursor } = response);
-    } else {
-      keepPaging = false;
+  for (const notification of notifications) {
+    if (!latestIndexedAt || toTime(notification.indexedAt) > toTime(latestIndexedAt)) {
+      latestIndexedAt = notification.indexedAt;
     }
   }
 
-  if (keepPaging && page === MAX_NOTIFICATION_PAGES) {
-    stoppedEarly = true;
-  }
+  // Filtering out malformed records mustn't turn a page into proof that we're
+  // finished. Even an empty page can have a cursor leading to valid mentions.
+  const entirelyRead =
+    !skippedInvalid &&
+    notifications.length > 0 &&
+    notifications.every((notification) => notification.isRead);
 
-  // We mark everything up to the newest notification as read, so any unread
-  // mentions on the pages we didn't fetch are lost. We don't know how many
-  // there are, but unread notifications on the last page mean there likely are.
-  if (stoppedEarly) {
-    logger.warn(
-      `⚠️ Stopped paging after ${page} page(s) with ${unreadOnLastPage} unread notifications on the last one. Older unread mentions, if any, will be marked read without a reply`,
-    );
-  }
-
-  if (fetchedCount === 0) {
-    logger.info('❌ No notifications found');
-    return { mentions: [], latestIndexedAt: null };
-  }
-
-  logger.info(`📥 Fetched ${fetchedCount} notifications across ${page} page(s)`);
-  logger.info(`📤 Found ${mentions.length} unread mentions`);
-
-  return { mentions, latestIndexedAt };
+  return {
+    mentions: notifications.filter(
+      (notification) => notification.reason === 'mention' && !notification.isRead,
+    ),
+    latestIndexedAt,
+    nextCursor: entirelyRead ? null : (nextCursor ?? null),
+  };
 };
 
 // Marks notifications as read up to (and including) the given timestamp.

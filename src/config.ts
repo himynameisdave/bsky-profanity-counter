@@ -14,6 +14,10 @@ export const BLUESKY_SERVICE = 'https://bsky.social';
 // whichever comes first.
 export const MAX_POSTS = 25_000;
 
+// Each page is checkpointed in Postgres. A longer unread backlog continues on
+// the next run, without marking the remaining notifications as read.
+export const MAX_NOTIFICATION_PAGES = 25;
+
 // How long an analysis gets reused before we count someone's posts again
 export const ANALYSIS_CACHE_TTL_MS = 24 * HOUR_MS;
 

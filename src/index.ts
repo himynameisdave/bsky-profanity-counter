@@ -1,7 +1,7 @@
-import { createAgent, getMentions } from './services/bluesky.js';
+import { createAgent } from './services/bluesky.js';
 import * as logger from './services/logger.js';
 import * as db from './services/database.js';
-import storeMentions from './mentions.js';
+import { collectMentions } from './notifications.js';
 import { checkAndProcessMentions } from './analysis.js';
 import { describeError } from './errors.js';
 import { STUCK_MENTION_TIMEOUT_MINUTES, loadEnv } from './config.js';
@@ -32,20 +32,7 @@ async function main() {
 
   // Fetching new mentions failing mustn't stop us answering the ones already queued
   try {
-    // STEP 1: Get recent mentions and store them in the database
-    logger.info('🗣️ Getting unread mentions from Bluesky...');
-    const { mentions, latestIndexedAt } = await getMentions(agent);
-    stats.fetched = mentions.length;
-
-    if (mentions.length > 0) {
-      logger.info(`✅ Found ${mentions.length} unread mentions to process`);
-    } else {
-      logger.info('🫤 No new mentions to store, going to process some analysis');
-    }
-
-    //  First thing we do is store the mentions in the database, then move the
-    //  read cursor up to the batch we just fetched
-    await storeMentions(agent, mentions, latestIndexedAt);
+    await collectMentions(agent);
   } catch (error) {
     logger.error(
       `❌ Error getting new mentions, still working through the queue:\n\t- ${describeError(error)}`,

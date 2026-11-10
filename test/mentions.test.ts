@@ -10,7 +10,6 @@ vi.mock(import('../src/services/database.js'), () => ({
 }));
 
 vi.mock(import('../src/services/bluesky.js'), () => ({
-  markNotificationsAsRead: vi.fn<typeof Bsky.markNotificationsAsRead>(),
   getPost: vi.fn<typeof Bsky.getPost>(),
   getProfile: vi.fn<typeof Bsky.getProfile>(),
 }));
@@ -49,27 +48,27 @@ describe(storeMentions, () => {
     vi.resetAllMocks();
   });
 
-  it('marks notifications read up to the newest one fetched when everything stores', async () => {
+  it('reports success only after every mention on the page is stored', async () => {
     const mentions = [
       makeMention('2', '2026-01-02T00:00:00.000Z'),
       makeMention('1', '2026-01-01T00:00:00.000Z'),
     ];
 
-    await storeMentions(agent, mentions, '2026-01-02T06:00:00.000Z');
+    const stored = await storeMentions(agent, mentions);
 
     expect(db.storeMention).toHaveBeenCalledTimes(2);
-    // Oldest first, so the read cursor only ever moves over stored mentions
+    // Keep processing deterministic, one mention at a time
     expect(vi.mocked(db.storeMention).mock.calls.map(([data]) => data.postId)).toStrictEqual([
       '1',
       '2',
     ]);
-    expect(bsky.markNotificationsAsRead).toHaveBeenCalledWith(agent, '2026-01-02T06:00:00.000Z');
+    expect(stored).toBe(true);
     expect(db.storeMention).toHaveBeenCalledWith(
       expect.objectContaining({ did: 'did:plc:someone' }),
     );
   });
 
-  it('advances the read cursor only up to the last mention stored before a failure', async () => {
+  it('reports an incomplete page when any mention fails, while still saving the others', async () => {
     const mentions = [
       makeMention('1', '2026-01-01T00:00:00.000Z'),
       makeMention('2', '2026-01-02T00:00:00.000Z'),
@@ -83,13 +82,13 @@ describe(storeMentions, () => {
       return {} as any;
     });
 
-    await storeMentions(agent, mentions, '2026-01-03T12:00:00.000Z');
+    const stored = await storeMentions(agent, mentions);
 
-    // The failed mention (and the one after it) stay unread for the next run
-    expect(bsky.markNotificationsAsRead).toHaveBeenCalledWith(agent, '2026-01-01T00:00:00.000Z');
+    expect(stored).toBe(false);
+    expect(db.storeMention).toHaveBeenCalledTimes(3);
   });
 
-  it('does not mark anything read when the oldest mention fails to store', async () => {
+  it('reports failure when the oldest mention cannot be stored', async () => {
     const mentions = [
       makeMention('1', '2026-01-01T00:00:00.000Z'),
       makeMention('2', '2026-01-02T00:00:00.000Z'),
@@ -97,9 +96,9 @@ describe(storeMentions, () => {
 
     vi.mocked(db.storeMention).mockRejectedValue(new Error('💥 database is having a day'));
 
-    await storeMentions(agent, mentions, '2026-01-02T12:00:00.000Z');
+    const stored = await storeMentions(agent, mentions);
 
-    expect(bsky.markNotificationsAsRead).not.toHaveBeenCalled();
+    expect(stored).toBe(false);
   });
 
   it.each([false, true])(
@@ -119,28 +118,23 @@ describe(storeMentions, () => {
         return {} as Awaited<ReturnType<typeof Db.storeMention>>;
       });
 
-      await storeMentions(agent, [second, first], second.indexedAt);
+      const stored = await storeMentions(agent, [second, first]);
 
       expect(db.storeMention).toHaveBeenCalledTimes(2);
       expect(db.storeMention).toHaveBeenCalledWith(
         expect.objectContaining({ postUrl: second.uri }),
       );
-      expect(vi.mocked(bsky.markNotificationsAsRead).mock.calls).toStrictEqual(
-        tied ? [] : [[agent, first.indexedAt]],
-      );
+      expect(stored).toBe(false);
 
       // Retrying the unread batch can persist both URIs before advancing the cursor.
       vi.mocked(db.storeMention).mockResolvedValue(
         {} as Awaited<ReturnType<typeof Db.storeMention>>,
       );
-      vi.mocked(bsky.markNotificationsAsRead).mockClear();
-      await storeMentions(agent, [second, first], second.indexedAt);
-
-      expect(bsky.markNotificationsAsRead).toHaveBeenCalledExactlyOnceWith(agent, second.indexedAt);
+      await expect(storeMentions(agent, [second, first])).resolves.toBe(true);
     },
   );
 
-  it('keeps the cursor behind a failed timestamp even when a tied mention was stored first', async () => {
+  it("reports an incomplete page when a failed mention shares a stored mention's timestamp", async () => {
     const mentions = [
       makeMention('older', '2026-01-01T00:00:00.000Z'),
       makeMention('stored', '2026-01-02T00:00:00.000Z'),
@@ -155,23 +149,15 @@ describe(storeMentions, () => {
     );
     vi.mocked(db.storeMention).mockRejectedValueOnce(new Error('tied failure'));
 
-    await storeMentions(agent, mentions, mentions[3].indexedAt);
+    const stored = await storeMentions(agent, mentions);
 
     expect(db.storeMention).toHaveBeenCalledTimes(4);
-    expect(bsky.markNotificationsAsRead).not.toHaveBeenCalled();
+    expect(stored).toBe(false);
   });
 
-  it('still advances the read cursor when the batch had no mentions in it', async () => {
-    await storeMentions(agent, [], '2026-01-02T12:00:00.000Z');
-
+  it('completes pages with no mentions without storing anything', async () => {
+    await expect(storeMentions(agent, [])).resolves.toBe(true);
     expect(db.storeMention).not.toHaveBeenCalled();
-    expect(bsky.markNotificationsAsRead).toHaveBeenCalledWith(agent, '2026-01-02T12:00:00.000Z');
-  });
-
-  it('does nothing when no notifications were fetched at all', async () => {
-    await storeMentions(agent, [], null);
-
-    expect(bsky.markNotificationsAsRead).not.toHaveBeenCalled();
   });
 
   describe('when the mention is a reply', () => {
@@ -187,11 +173,8 @@ describe(storeMentions, () => {
       vi.mocked(bsky.getPost).mockResolvedValue({ uri: PARENT_URI, cid: 'bafy' } as any);
       vi.mocked(bsky.getProfile).mockResolvedValue({ handle: 'parent.bsky.social' } as any);
 
-      await storeMentions(
-        agent,
-        [makeReply('1', '2026-01-01T00:00:00.000Z')],
-        '2026-01-01T00:00:00.000Z',
-      );
+      const stored = await storeMentions(agent, [makeReply('1', '2026-01-01T00:00:00.000Z')]);
+      expect(stored).toBe(true);
 
       expect(bsky.getProfile).toHaveBeenCalledWith(agent, 'did:plc:parent');
       expect(db.storeMention).toHaveBeenCalledWith(
@@ -202,11 +185,8 @@ describe(storeMentions, () => {
     it('audits the person who tagged us when the parent post is gone', async () => {
       vi.mocked(bsky.getPost).mockResolvedValue(null);
 
-      await storeMentions(
-        agent,
-        [makeReply('1', '2026-01-01T00:00:00.000Z')],
-        '2026-01-01T00:00:00.000Z',
-      );
+      const stored = await storeMentions(agent, [makeReply('1', '2026-01-01T00:00:00.000Z')]);
+      expect(stored).toBe(true);
 
       expect(db.storeMention).toHaveBeenCalledWith(
         expect.objectContaining({ did: 'did:plc:someone', userHandle: 'someone.bsky.social' }),
@@ -216,15 +196,11 @@ describe(storeMentions, () => {
     it('queues a terminal parent-profile error under the parent DID so its failure can be persisted', async () => {
       vi.mocked(bsky.getPost).mockResolvedValue({ uri: PARENT_URI, cid: 'cid' });
       vi.mocked(bsky.getProfile).mockRejectedValue(new XRPCError(400, 'BlockedActor', 'Blocked'));
-      await storeMentions(
-        agent,
-        [makeReply('1', '2026-01-01T00:00:00.000Z')],
-        '2026-01-01T00:00:00.000Z',
-      );
+      const stored = await storeMentions(agent, [makeReply('1', '2026-01-01T00:00:00.000Z')]);
+      expect(stored).toBe(true);
       expect(db.storeMention).toHaveBeenCalledWith(
         expect.objectContaining({ did: 'did:plc:parent' }),
       );
-      expect(bsky.markNotificationsAsRead).toHaveBeenCalledOnce();
     });
 
     it.each([
@@ -244,14 +220,10 @@ describe(storeMentions, () => {
       async (_step, fail) => {
         fail();
 
-        await storeMentions(
-          agent,
-          [makeReply('1', '2026-01-01T00:00:00.000Z')],
-          '2026-01-01T06:00:00.000Z',
-        );
+        const stored = await storeMentions(agent, [makeReply('1', '2026-01-01T00:00:00.000Z')]);
 
         expect(db.storeMention).not.toHaveBeenCalled();
-        expect(bsky.markNotificationsAsRead).not.toHaveBeenCalled();
+        expect(stored).toBe(false);
       },
     );
   });

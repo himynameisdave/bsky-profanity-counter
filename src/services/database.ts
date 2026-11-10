@@ -26,6 +26,30 @@ export type ProfanityDetails = {
 // goes through this module, so there's a single connection pool to close.
 const prisma = new PrismaClient();
 
+/** Where this bot paused collecting unread notifications, if it hasn't finished. */
+export async function getNotificationScan(botDid: string) {
+  return prisma.notificationScan.findUnique({ where: { botDid } });
+}
+
+/** Call only after every mention on the page has been persisted. */
+export async function saveNotificationScan(
+  botDid: string,
+  cursor: string,
+  latestIndexedAt: string | null,
+) {
+  const data = { cursor, latestIndexedAt };
+  return prisma.notificationScan.upsert({
+    where: { botDid },
+    create: { botDid, ...data },
+    update: data,
+  });
+}
+
+/** Clear only after Bluesky accepts the completed scan's read acknowledgement. */
+export async function clearNotificationScan(botDid: string) {
+  return prisma.notificationScan.deleteMany({ where: { botDid } });
+}
+
 /**
  * Store a new mention from a notification.
  *

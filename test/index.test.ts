@@ -8,6 +8,7 @@ import type * as Db from '../src/services/database.js';
 import type * as Bsky from '../src/services/bluesky.js';
 import type * as Analysis from '../src/analysis.js';
 import type * as Config from '../src/config.js';
+import type * as Notifications from '../src/notifications.js';
 
 const ENV = { bluesky: { identifier: 'test.bot', password: 'test-password' } };
 
@@ -17,16 +18,16 @@ const db = vi.hoisted(() => ({
 }));
 const bsky = vi.hoisted(() => ({
   createAgent: vi.fn<typeof Bsky.createAgent>(),
-  getMentions: vi.fn<typeof Bsky.getMentions>(),
 }));
 const analysis = vi.hoisted(() => ({
   checkAndProcessMentions: vi.fn<typeof Analysis.checkAndProcessMentions>(),
 }));
+const collectMentions = vi.hoisted(() => vi.fn<typeof Notifications.collectMentions>());
 const loadEnv = vi.hoisted(() => vi.fn<typeof Config.loadEnv>());
 
 vi.mock(import('../src/services/database.js'), () => db);
 vi.mock(import('../src/services/bluesky.js'), () => bsky);
-vi.mock(import('../src/mentions.js'), () => ({ default: vi.fn<() => Promise<void>>() }));
+vi.mock(import('../src/notifications.js'), () => ({ collectMentions }));
 vi.mock(import('../src/analysis.js'), () => analysis);
 // Keep the real limits, but not the real environment or `.env`
 vi.mock(import('../src/config.js'), async (importOriginal) => ({
@@ -60,7 +61,7 @@ describe('the entrypoint', () => {
     db.resetStuckMentions.mockResolvedValue(0);
     db.disconnect.mockResolvedValue();
     bsky.createAgent.mockResolvedValue({} as BskyAgent);
-    bsky.getMentions.mockResolvedValue({ mentions: [], latestIndexedAt: null });
+    collectMentions.mockResolvedValue();
     analysis.checkAndProcessMentions.mockResolvedValue();
   });
 
@@ -81,7 +82,7 @@ describe('the entrypoint', () => {
   });
 
   it('still disconnects and exits when the run fails', async () => {
-    bsky.getMentions.mockRejectedValue(new Error('Internal Server Error'));
+    collectMentions.mockRejectedValue(new Error('Internal Server Error'));
 
     await import('../src/index.js');
 
@@ -90,7 +91,7 @@ describe('the entrypoint', () => {
   });
 
   it('still works through the queued mentions when fetching new ones fails', async () => {
-    bsky.getMentions.mockRejectedValue(new Error('Internal Server Error'));
+    collectMentions.mockRejectedValue(new Error('Internal Server Error'));
 
     await import('../src/index.js');
 
@@ -154,9 +155,9 @@ describe('the entrypoint', () => {
 
   it('writes a run summary for GitHub Actions', async () => {
     const readSummary = useSummaryFile();
-    bsky.getMentions.mockResolvedValue({
-      mentions: [{}, {}] as Awaited<ReturnType<typeof Bsky.getMentions>>['mentions'],
-      latestIndexedAt: null,
+    collectMentions.mockImplementation(async () => {
+      const { stats } = await import('../src/run-stats.js');
+      stats.fetched = 2;
     });
 
     await import('../src/index.js');
