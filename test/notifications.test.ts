@@ -22,6 +22,7 @@ vi.mock(import('../src/services/logger.js'), () => ({
 // the database and the API boundary are fake, including Bluesky's global seenAt.
 const { collectMentions } = await import('../src/notifications.js');
 const { stats } = await import('../src/run-stats.js');
+const logger = await import('../src/services/logger.js');
 const BOT_DID = 'did:plc:bot';
 type Scan = NonNullable<Awaited<ReturnType<typeof Db.getNotificationScan>>>;
 let scan: Scan | null;
@@ -76,6 +77,7 @@ beforeEach(() => {
   stats.fetched = 0;
   stats.stored = 0;
   stats.failed = 0;
+  stats.errors = 0;
   db.getNotificationScan.mockImplementation(async () => (scan ? { ...scan } : null));
   db.saveNotificationScan.mockImplementation(async (botDid, cursor, latestIndexedAt) => {
     scan = { botDid, cursor, latestIndexedAt, updatedAt: new Date() };
@@ -92,6 +94,83 @@ beforeEach(() => {
 });
 
 describe('collectMentions', () => {
+  it('collects new arrivals while a historical parent profile consistently fails SDK validation', async () => {
+    const parentUri = 'at://did:plc:parent/app.bsky.feed.post/parent';
+    const first = notification('first');
+    const failed: Notification = {
+      ...notification('failed', '2025-12-31T00:00:00.000Z'),
+      record: { reply: { parent: { uri: parentUri, cid: first.cid } } },
+    };
+    const newest = [first];
+    const seen: string[] = [];
+    let profileRequests = 0;
+    let invalidProfile = true;
+    const agent = new BskyAgent({
+      service: 'https://pds.example',
+      fetch: async (input, init) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const url = new URL(request.url);
+        if (url.pathname.endsWith('listNotifications')) {
+          return Response.json(
+            url.searchParams.has('cursor')
+              ? { notifications: [failed] }
+              : { notifications: newest, cursor: 'older' },
+          );
+        }
+        if (url.pathname.endsWith('getRecord')) {
+          return Response.json({ uri: parentUri, cid: first.cid, value: { text: 'parent' } });
+        }
+        if (url.pathname.endsWith('getProfile')) {
+          profileRequests++;
+          return Response.json({
+            did: 'did:plc:parent',
+            handle: 'parent.bsky.social',
+            displayName: 'x'.repeat(invalidProfile ? 65 : 64),
+          });
+        }
+        if (url.pathname.endsWith('updateSeen')) {
+          const body = (await request.json()) as { seenAt: string };
+          seen.push(body.seenAt);
+          return Response.json({});
+        }
+        throw new Error(`Unexpected request: ${url.pathname}`);
+      },
+    });
+    vi.spyOn(agent, 'assertDid', 'get').mockReturnValue(BOT_DID);
+
+    await collectMentions(agent);
+
+    expect(saved).toStrictEqual(new Set([first.uri]));
+    expect(scan).toMatchObject({ cursor: 'older', latestIndexedAt: first.indexedAt });
+    expect(profileRequests).toBe(1);
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('displayName'));
+
+    const arrival = notification('arrival', '2026-01-02T00:00:00.000Z');
+    newest.unshift(arrival);
+    await collectMentions(agent);
+
+    expect(saved.has(arrival.uri)).toBe(true);
+    expect(saved.has(failed.uri)).toBe(false);
+    expect(scan).toMatchObject({ cursor: 'older', latestIndexedAt: first.indexedAt });
+    expect(profileRequests).toBe(2);
+    expect(seen).toStrictEqual([]);
+
+    // The failure can last for multiple runs without starving later arrivals.
+    const laterArrival = notification('later-arrival', '2026-01-03T00:00:00.000Z');
+    newest.unshift(laterArrival);
+    await collectMentions(agent);
+    expect(saved.has(laterArrival.uri)).toBe(true);
+    expect(profileRequests).toBe(3);
+    expect(seen).toStrictEqual([]);
+
+    invalidProfile = false;
+    await collectMentions(agent);
+    expect(saved.has(failed.uri)).toBe(true);
+    expect(scan).toBeNull();
+    // Collecting fresh arrivals must never raise the old scan's acknowledgement.
+    expect(seen).toStrictEqual([first.indexedAt]);
+  });
+
   it('resumes a 26-page backlog and acknowledges only after every page is durable', async () => {
     const pages = Array.from({ length: 26 }, (_, index) => [notification(String(index))]);
     const { agent, listNotifications, updateSeen } = makeAgent(pages);
@@ -107,7 +186,13 @@ describe('collectMentions', () => {
     listNotifications.mockClear();
     await collectMentions(agent);
 
-    expect(listNotifications).toHaveBeenCalledExactlyOnceWith(
+    expect(listNotifications).toHaveBeenNthCalledWith(
+      1,
+      { cursor: undefined, limit: 100 },
+      expect.anything(),
+    );
+    expect(listNotifications).toHaveBeenNthCalledWith(
+      2,
       { cursor: '25', limit: 100 },
       expect.anything(),
     );
@@ -133,7 +218,7 @@ describe('collectMentions', () => {
     expect(scan).toBeNull();
   });
 
-  it('leaves arrivals during a paused scan unread for the next scan', async () => {
+  it('collects arrivals during a paused scan without extending its acknowledgement', async () => {
     const pages = Array.from({ length: 26 }, (_, index) => [notification(String(index))]);
     const { agent, updateSeen } = makeAgent(pages);
     await collectMentions(agent);
@@ -142,7 +227,7 @@ describe('collectMentions', () => {
     pages[0].unshift(arrival);
     await collectMentions(agent);
 
-    expect(saved.has(arrival.uri)).toBe(false);
+    expect(saved.has(arrival.uri)).toBe(true);
     expect(updateSeen).toHaveBeenLastCalledWith(
       { seenAt: '2026-01-01T00:00:00.000Z' },
       expect.anything(),
@@ -178,6 +263,83 @@ describe('collectMentions', () => {
     expect(saved.size).toBe(4);
     expect(updateSeen).toHaveBeenCalledOnce();
     expect(scan).toBeNull();
+  });
+
+  it('continues across multiple new pages despite a failed new mention, without acknowledging it', async () => {
+    const historical = notification('historical');
+    const failed = notification('failed-new', '2026-01-03T00:00:00.000Z');
+    const healthy = notification('healthy-new', '2026-01-02T00:00:00.000Z');
+    scan = {
+      botDid: BOT_DID,
+      cursor: '2',
+      latestIndexedAt: historical.indexedAt,
+      updatedAt: new Date(),
+    };
+    const { agent, listNotifications, updateSeen } = makeAgent([[failed], [healthy], [historical]]);
+    const store = db.storeMention.getMockImplementation()!;
+    db.storeMention.mockImplementation(async (input) => {
+      if (input.postUrl === failed.uri) {
+        throw new Error('failed to persist new request');
+      }
+      return store(input);
+    });
+
+    await collectMentions(agent);
+
+    expect(saved).toStrictEqual(new Set([healthy.uri, historical.uri]));
+    expect(updateSeen).toHaveBeenCalledExactlyOnceWith(
+      { seenAt: historical.indexedAt },
+      expect.anything(),
+    );
+    // Only the historical scan was acknowledged. The failed newer request is
+    // still unread, and is retried by the ordinary scan on the next run.
+    const newestPage = await listNotifications({});
+    expect(newestPage.data.notifications[0]).toMatchObject({ uri: failed.uri, isRead: false });
+    db.storeMention.mockImplementation(store);
+    await collectMentions(agent);
+    expect(saved.has(failed.uri)).toBe(true);
+  });
+
+  it('resumes the historical scan even if fetching new arrivals fails', async () => {
+    const historical = notification('historical');
+    scan = {
+      botDid: BOT_DID,
+      cursor: '1',
+      latestIndexedAt: historical.indexedAt,
+      updatedAt: new Date(),
+    };
+    const { agent, listNotifications } = makeAgent([[notification('head')], [historical]]);
+    listNotifications.mockRejectedValueOnce(new Error('newest page unavailable'));
+
+    await collectMentions(agent);
+
+    expect(saved.has(historical.uri)).toBe(true);
+    expect(stats.errors).toBe(1);
+    expect(scan).toBeNull();
+  });
+
+  it('stores new arrivals even if fetching the historical page keeps failing', async () => {
+    const arrival = notification('arrival', '2026-01-02T00:00:00.000Z');
+    scan = {
+      botDid: BOT_DID,
+      cursor: '1',
+      latestIndexedAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: new Date(),
+    };
+    const { agent, listNotifications, updateSeen } = makeAgent([[arrival], []]);
+    const list = listNotifications.getMockImplementation()!;
+    listNotifications.mockImplementation(async (input) => {
+      if (input.cursor === '1') {
+        throw new Error('historical page unavailable');
+      }
+      return list(input);
+    });
+
+    await expect(collectMentions(agent)).rejects.toThrow('historical page unavailable');
+
+    expect(saved.has(arrival.uri)).toBe(true);
+    expect(scan?.cursor).toBe('1');
+    expect(updateSeen).not.toHaveBeenCalled();
   });
 
   it('preserves completed pages when the next API request fails', async () => {

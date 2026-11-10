@@ -75,7 +75,13 @@ describe.skipIf(!process.env.DATABASE_URL || process.env.NOTIFICATION_SCAN_DATAB
       listNotifications.mockClear();
       await collectMentions(agent);
 
-      expect(listNotifications).toHaveBeenCalledExactlyOnceWith(
+      expect(listNotifications).toHaveBeenNthCalledWith(
+        1,
+        { cursor: undefined, limit: 100 },
+        expect.anything(),
+      );
+      expect(listNotifications).toHaveBeenNthCalledWith(
+        2,
         { cursor: '25', limit: 100 },
         expect.anything(),
       );

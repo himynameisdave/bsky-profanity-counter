@@ -1,10 +1,57 @@
 import type { BskyAgent } from '@atproto/api';
+import type { NotificationScan } from '@prisma/client';
 import * as bsky from './services/bluesky.js';
 import * as db from './services/database.js';
 import * as logger from './services/logger.js';
 import storeMentions from './mentions.js';
 import { MAX_NOTIFICATION_PAGES } from './config.js';
 import { stats } from './run-stats.js';
+import { describeError } from './errors.js';
+
+/**
+ * A paused historical page mustn't hide new arrivals. Collect the newer prefix
+ * separately, without changing either the saved bookmark or its read watermark.
+ * This pass can continue past a failed mention because it acknowledges nothing;
+ * the ordinary scan will revisit every page and retry anything not yet stored.
+ */
+async function collectNewMentions(agent: BskyAgent, scan: NotificationScan): Promise<void> {
+  let cursor: string | undefined;
+  const visited = new Set<string>();
+
+  logger.info('🗣️ Checking new arrivals before resuming the unread backlog...');
+
+  for (let page = 0; page < MAX_NOTIFICATION_PAGES; page++) {
+    if (cursor) {
+      visited.add(cursor);
+    }
+    // Pagination needs the preceding page's cursor
+    // oxlint-disable-next-line no-await-in-loop
+    const batch = await bsky.getMentions(agent, cursor);
+    stats.fetched += batch.mentions.length;
+
+    if (batch.nextCursor && visited.has(batch.nextCursor)) {
+      throw new Error('Bluesky repeated a notification cursor while checking new arrivals');
+    }
+
+    // Save healthy mentions even if another one fails. This pass cannot mark
+    // anything read or replace the historical bookmark, including on failure.
+    // oxlint-disable-next-line no-await-in-loop
+    await storeMentions(agent, batch.mentions);
+
+    if (
+      batch.nextCursor === null ||
+      batch.nextCursor === scan.cursor ||
+      (batch.latestIndexedAt &&
+        scan.latestIndexedAt &&
+        Date.parse(batch.latestIndexedAt) <= Date.parse(scan.latestIndexedAt))
+    ) {
+      return;
+    }
+    cursor = batch.nextCursor;
+  }
+
+  logger.info(`📖 Checked ${MAX_NOTIFICATION_PAGES} pages of new arrivals; resuming the backlog`);
+}
 
 /**
  * Walk unread notifications newest-first, saving each page before its bookmark.
@@ -15,6 +62,15 @@ import { stats } from './run-stats.js';
 export async function collectMentions(agent: BskyAgent): Promise<void> {
   const botDid = agent.assertDid;
   const scan = await db.getNotificationScan(botDid);
+  if (scan) {
+    try {
+      await collectNewMentions(agent, scan);
+    } catch (error) {
+      // A failure fetching new arrivals mustn't also stop the historical scan.
+      logger.error(`❌ Error collecting new arrivals: ${describeError(error)}`);
+      stats.errors++;
+    }
+  }
   let cursor = scan?.cursor;
   let latestIndexedAt = scan?.latestIndexedAt ?? null;
   const visited = new Set<string>();
