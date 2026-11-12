@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import * as db from '../../src/services/database.js';
 import { STUCK_MENTION_TIMEOUT_MINUTES } from '../../src/config.js';
 import type { PrismaClient } from '../../src/generated/prisma/client.js';
-import { createFixtureClient, testDatabase } from './postgres.js';
+import { createFixtureClient, table, testDatabase } from './postgres.js';
 
 dotenv.config({ quiet: true });
 
@@ -156,8 +156,8 @@ describe.skipIf(!process.env.DATABASE_URL || process.env.PRISMA_ADAPTER_DATABASE
       const busy = await addMention('busy', { status: 'ANALYZING' });
       const longAgo = new Date(Date.now() - (STUCK_MENTION_TIMEOUT_MINUTES + 10) * MINUTE_MS);
       const justNow = new Date(Date.now() - MINUTE_MS);
-      await fixtures.$executeRaw`UPDATE "Mention" SET "updatedAt" = ${longAgo} WHERE id = ${stuck.id}`;
-      await fixtures.$executeRaw`UPDATE "Mention" SET "updatedAt" = ${justNow} WHERE id = ${busy.id}`;
+      await fixtures.$executeRaw`UPDATE ${table('Mention')} SET "updatedAt" = ${longAgo} WHERE id = ${stuck.id}`;
+      await fixtures.$executeRaw`UPDATE ${table('Mention')} SET "updatedAt" = ${justNow} WHERE id = ${busy.id}`;
 
       await expect(db.resetStuckMentions(STUCK_MENTION_TIMEOUT_MINUTES)).resolves.toBeGreaterThan(
         0,

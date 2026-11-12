@@ -30,6 +30,11 @@ export type ProfanityDetails = {
 // made by init(), never at import time, so importing this reads no environment.
 let client: PrismaClient | undefined;
 
+// The Postgres schema the generated queries use. Raw SQL names its tables in it
+// too, rather than trusting search_path, which a role or database can set to
+// put some other schema first.
+let schema = 'public';
+
 /**
  * Sets up the client and its connection pool for this run. Entry points call it
  * once, after loadEnv(). Nothing connects until the first query.
@@ -39,14 +44,7 @@ export function init(config: DatabaseConfig) {
     throw new Error('The database is already initialized; call init() once per run');
   }
 
-  // Only for a schema other than the default, like Prisma 6 did. Setting it at
-  // connect time keeps raw SQL in the same schema as the generated queries.
-  // Connection poolers like PgBouncer can reject this startup option.
-  const searchPath =
-    config.schema && config.schema !== 'public'
-      ? { options: `-c search_path="${config.schema}"` }
-      : {};
-
+  schema = config.schema ?? 'public';
   const adapter = new PrismaPg(
     {
       connectionString: config.url,
@@ -54,12 +52,16 @@ export function init(config: DatabaseConfig) {
       connectionTimeoutMillis: DATABASE_CONNECT_TIMEOUT_MS,
       // Lets you spot the bot's connections in pg_stat_activity
       application_name: 'profanity.accountant',
-      ...searchPath,
     },
-    config.schema ? { schema: config.schema } : undefined,
+    { schema },
   );
   client = new PrismaClient({ adapter });
 }
+
+const quoteIdentifier = (name: string) => `"${name.replaceAll('"', '""')}"`;
+
+/** A table in the generated queries' schema, quoted for raw SQL. */
+const table = (name: string) => Prisma.raw(`${quoteIdentifier(schema)}.${quoteIdentifier(name)}`);
 
 const prisma = (): PrismaClient => {
   if (!client) {
@@ -291,13 +293,13 @@ export async function getTotalProfanityCount({
 }: { excludeDid?: string; excludeHandle?: string } = {}): Promise<number> {
   const [{ total }] = await prisma().$queryRaw<[{ total: bigint | null }]>`
     SELECT SUM(a."profanityCount") AS total
-    FROM "Analysis" a
+    FROM ${table('Analysis')} a
     WHERE (
       a."did" IS NOT NULL
       OR (
         a."profanityDetails" -> 'identityBackfill' ->> 'reason' IS DISTINCT FROM ${DUPLICATE_SNAPSHOT_REASON}
         AND NOT EXISTS (
-          SELECT 1 FROM "Analysis" b
+          SELECT 1 FROM ${table('Analysis')} b
           WHERE b."did" IS NOT NULL AND b."userHandle" = a."userHandle"
         )
       )

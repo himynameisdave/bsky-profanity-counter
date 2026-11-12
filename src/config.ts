@@ -54,7 +54,7 @@ export type Env = { bluesky: BlueskyCredentials; database: DatabaseConfig };
 
 const REQUIRED_ENV_VARS = ['BLUESKY_IDENTIFIER', 'BLUESKY_PASSWORD', 'DATABASE_URL'] as const;
 
-// Something we can safely quote in a search_path. Postgres allows more, but
+// A schema name we can safely quote into raw SQL. Postgres allows more, but
 // nobody needs a schema called `my "schema"`.
 const SCHEMA_NAME = /^[A-Za-z_][\w$]*$/u;
 

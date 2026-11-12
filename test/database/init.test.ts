@@ -77,7 +77,8 @@ describe('setting up the database service', () => {
       connectionTimeoutMillis: DATABASE_CONNECT_TIMEOUT_MS,
       application_name: 'profanity.accountant',
     });
-    expect(options).toBeUndefined();
+    // Prisma 6 used public when the URL didn't say
+    expect(options).toStrictEqual({ schema: 'public' });
     expect(mocks.newClient).toHaveBeenCalledExactlyOnceWith({
       adapter: mocks.newAdapter.mock.instances[0],
     });
@@ -131,27 +132,16 @@ describe('setting up the database service', () => {
     await expect(db.getUnprocessedMentionsCount()).rejects.toThrow('not initialized');
   });
 
-  // Prisma 6 qualified its queries with the URL's schema and set search_path, so
-  // raw SQL found the same tables. The pg driver does neither by itself.
-  it("uses the URL's schema for generated queries and raw SQL alike", async () => {
+  // The pg driver ignores the URL's schema, so it has to reach the adapter
+  it.each(['public', 'bot_data'])("hands the URL's schema (%s) to the adapter", async (name) => {
     const db = await importDatabase();
 
-    db.init({ url: `${URL}?schema=bot_data`, schema: 'bot_data' });
-
-    expect(mocks.newAdapter).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ options: '-c search_path="bot_data"' }),
-      { schema: 'bot_data' },
-    );
-  });
-
-  // Poolers like PgBouncer can reject startup options, so don't send one for nothing
-  it("doesn't set search_path for the default schema", async () => {
-    const db = await importDatabase();
-
-    db.init({ url: `${URL}?schema=public`, schema: 'public' });
+    db.init({ url: `${URL}?schema=${name}`, schema: name });
 
     const [[config, options]] = mocks.newAdapter.mock.calls;
+    expect(options).toStrictEqual({ schema: name });
+    // Raw SQL names the schema instead, since poolers like PgBouncer can reject
+    // a search_path sent as a startup option
     expect(config).not.toHaveProperty('options');
-    expect(options).toStrictEqual({ schema: 'public' });
   });
 });
