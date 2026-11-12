@@ -16,10 +16,13 @@ vi.mock(import('@prisma/adapter-pg'), () => ({
   PrismaPg: mocks.newAdapter as unknown as typeof PrismaPg,
 }));
 vi.mock(import('../../src/generated/prisma/client.js'), () => ({
-  PrismaClient: vi.fn<(options: unknown) => unknown>((options) => {
-    mocks.newClient(options);
-    return { $disconnect: mocks.$disconnect, mention: { count: mocks.count } };
-  }) as unknown as typeof PrismaClient,
+  PrismaClient: class {
+    $disconnect = mocks.$disconnect;
+    mention = { count: mocks.count };
+    constructor(options: unknown) {
+      mocks.newClient(options);
+    }
+  } as unknown as typeof PrismaClient,
 }));
 
 // Each test gets a fresh copy of the module, and with it a fresh client slot
