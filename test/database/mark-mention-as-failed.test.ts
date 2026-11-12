@@ -6,9 +6,9 @@ const { update } = vi.hoisted(() => ({
 }));
 
 vi.mock(import('@prisma/client'), () => ({
-  PrismaClient: vi.fn<() => { mention: { update: typeof update } }>(() => ({
-    mention: { update },
-  })) as unknown as typeof PrismaClient,
+  PrismaClient: class {
+    mention = { update };
+  } as unknown as typeof PrismaClient,
 }));
 
 const { markMentionAsFailed } = await import('../../src/services/database.js');
