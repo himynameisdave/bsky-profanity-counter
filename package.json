@@ -18,6 +18,7 @@
     "update-profile:dev": "ts-node-esm src/update-profile.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:order": "vitest run --maxWorkers=1 --sequence.shuffle.files --sequence.seed=65",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
@@ -42,7 +43,8 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "vite": "^7.3.7",
+    "vitest": "^5.1.0"
   },
   "engines": {
     "node": ">=22.18.0"

@@ -14,9 +14,10 @@ pnpm typecheck      # tsc --noEmit, over src/ and test/
 pnpm test           # vitest run
 ```
 
-CI (`.github/workflows/ci.yml`) runs these on every PR, then `pnpm build`, and a `pre-commit`
-hook (`.githooks/pre-commit`, wired up by the `prepare` script) runs the format and lint checks
-before any commit lands. Do not bypass the hook with `--no-verify`.
+CI (`.github/workflows/ci.yml`) runs these on every PR, then `pnpm test:order` (every test file
+in one worker, shuffled with a fixed seed, to catch state leaking between files) and `pnpm build`.
+A `pre-commit` hook (`.githooks/pre-commit`, wired up by the `prepare` script) runs the format and
+lint checks before any commit lands. Do not bypass the hook with `--no-verify`.
 
 `tsconfig.json` covers `src/` and `test/` and never emits. `pnpm build` compiles just `src/`
 to `dist/` with `tsconfig.build.json`. If you touch either tsconfig, run `pnpm build` too.
@@ -38,6 +39,9 @@ to `dist/` with `tsconfig.build.json`. If you touch either tsconfig, run `pnpm b
 - Tests live in `test/`, mirroring `src/`.
 - Tests must not require a live database or network. Anything that does gets guarded with
   `describe.skipIf(...)` so CI stays green (see `test/database/db-query.test.ts`).
+- Test files share workers (`isolate: false` in `vitest.config.ts`). `test/setup.ts` resets the
+  module cache before each file, so `vi.mock` works as usual, but globals aren't reset. Anything
+  a test changes on `process`, the environment or the clock has to be put back in an `afterEach`.
 - Tests are typechecked, so type mocks against the real thing:
   `vi.fn<typeof Db.storeMention>()`, with `import type * as Db from '../src/services/database.js'`.
 

@@ -13,9 +13,9 @@ const { queryRaw } = vi.hoisted(() => ({
 vi.mock(import('@prisma/client'), async (importOriginal) => ({
   ...(await importOriginal()),
   // Just enough of a client for the query under test
-  PrismaClient: vi.fn<() => unknown>(() => ({
-    $queryRaw: queryRaw,
-  })) as unknown as typeof PrismaClient,
+  PrismaClient: class {
+    $queryRaw = queryRaw;
+  } as unknown as typeof PrismaClient,
 }));
 
 const { getTotalProfanityCount } = await import('../../src/services/database.js');
