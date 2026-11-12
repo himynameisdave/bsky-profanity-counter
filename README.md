@@ -102,7 +102,7 @@ All three are required. The bot refuses to start, and names whichever are missin
 The bot talks to Postgres through the `pg` driver (via Prisma's `@prisma/adapter-pg`), which reads the URL a little differently from what you might expect:
 
 - **TLS is off unless the URL asks for it.** Add `?sslmode=verify-full` for anything that isn't on your machine. `sslmode=require` currently means the same thing in `pg` (and logs a warning about it).
-- **The certificate is checked** against Node's built-in CAs. If your provider signs with its own CA, download its CA certificate and either set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`, or add `&sslrootcert=/path/to/ca.pem` to the URL. Options in the URL override any TLS settings in code, so the URL is the place to do it.
+- **The certificate is checked** against Node's built-in CAs. If your provider signs with its own CA, download its CA certificate and set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`. On GitHub Actions, put the certificate itself in a `DATABASE_CA_CERT` secret and the workflows do that for you.
 - **Prisma-only options do nothing.** `connection_limit`, `pool_timeout`, `connect_timeout`, `pgbouncer` and `sslaccept` are ignored. The pool size and connection timeout live in `src/config.ts`. `schema` still works.
 
 To check the compiled bot can reach a database, without writing anything to it:
@@ -121,6 +121,7 @@ The bot runs on GitHub Actions. To deploy your own:
    - `BLUESKY_IDENTIFIER`
    - `BLUESKY_PASSWORD`
    - `DATABASE_URL`
+   - `DATABASE_CA_CERT`, only if your database's certificate isn't signed by a public CA (see [Connecting to a hosted database](#connecting-to-a-hosted-database))
 3. Create the tables in that database by running `pnpm db:push` locally with `DATABASE_URL` pointed at it
 4. That's it. The workflows run on their own:
    - **Scheduled Application Run** (`scheduled-run.yml`): every 10 minutes, and on every push to `main`

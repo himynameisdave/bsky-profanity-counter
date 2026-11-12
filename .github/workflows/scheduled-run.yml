@@ -66,9 +66,16 @@ jobs:
         run: pnpm build
 
       - name: Run application
-        run: node dist/index.js
+        run: |
+          # Trusts the database's CA too, if it isn't one Node already trusts
+          if [ -n "$DATABASE_CA_CERT" ]; then
+            printf '%s\n' "$DATABASE_CA_CERT" > "$RUNNER_TEMP/database-ca.pem"
+            export NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/database-ca.pem"
+          fi
+          node dist/index.js
         env:
           NODE_ENV: production
           BLUESKY_IDENTIFIER: ${{ secrets.BLUESKY_IDENTIFIER }}
           BLUESKY_PASSWORD: ${{ secrets.BLUESKY_PASSWORD }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_CA_CERT: ${{ secrets.DATABASE_CA_CERT }}
