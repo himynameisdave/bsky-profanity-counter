@@ -24,34 +24,59 @@ const PRONOUN_SETS: PronounSet[] = [
   set("Ze's", 'zir', ['ze', 'zir', 'zirs', 'zirself']),
 ];
 
-/**
- * Picks the pronouns to use for someone from their profile's free-text
- * `pronouns` field.
- *
- * Only switches from "they" when every word in it belongs to exactly one set we
- * know (ie: `she/her`, `He / Him 🇨🇦`, just `she`). Emoji and punctuation are
- * ignored. Anything else falls back to "they", which is always in a mixed set
- * like `he/they`, and never wrong: `they/she`, `xe` on its own (we can't tell
- * which possessive), `she/her (ask)`, `any/all`, or nothing at all.
- */
-export const parsePronouns = (raw: string | undefined): Pronouns => {
-  const words = (raw ?? '')
+const THEY_WORDS = new Set(['they', 'them', 'their', 'theirs', 'themself', 'themselves']);
+
+// Words that flip the meaning of the pronouns around them (ie: `any except
+// he/him`). Every other word we don't know is safe to skip.
+const NEGATIONS = new Set(['except', 'not', 'no', 'never', 'avoid', "don't", 'dont']);
+
+// Letters, keeping apostrophes inside a word, so `it's` and `don't` stay whole
+const toWords = (raw: string) =>
+  raw
     .toLowerCase()
-    .split(/[^\p{L}]+/u)
+    .replaceAll('’', "'")
+    .split(/[^\p{L}']+/u)
+    .map((word) => word.replaceAll(/^'+|'+$/gu, ''))
     .filter(Boolean);
 
-  if (words.length === 0) {
+/**
+ * Picks the pronouns to use for someone from their profile's free-text
+ * `pronouns` field. Always one they listed, or "they" if we can't tell.
+ *
+ * - Words we don't know are skipped: names, jokes, other languages, emoji
+ *   (ie: `she/her/ella`, `He/Him/Boss` and `she and her` all count)
+ * - If they listed "they" anywhere (ie: `she/they`, `they/he`), it's "they"
+ * - Otherwise it's the first one they listed (ie: `it/she` is "it")
+ * - A negation (ie: `any except he/him`) means "they", since we'd only be
+ *   guessing at what's left
+ * - xe and ze's spelling comes from their other words; if we can't tell which
+ *   (ie: `xe` on its own), it's "they"
+ */
+export const parsePronouns = (raw: string | undefined): Pronouns => {
+  const words = toWords(raw ?? '');
+
+  if (words.some((word) => NEGATIONS.has(word) || THEY_WORDS.has(word))) {
     return THEY;
   }
 
-  const matches = PRONOUN_SETS.filter((pronounSet) =>
-    words.every((word) => pronounSet.words.has(word)),
-  );
+  for (const word of words) {
+    const sets = PRONOUN_SETS.filter((pronounSet) => pronounSet.words.has(word));
+    if (sets.length > 0) {
+      const matches =
+        sets.length === 1
+          ? sets
+          : sets.filter((pronounSet) =>
+              words.some((other) => other !== word && pronounSet.words.has(other)),
+            );
 
-  if (matches.length !== 1) {
-    return THEY;
+      if (matches.length !== 1) {
+        return THEY;
+      }
+
+      const [{ subjectHas, possessive }] = matches;
+      return { subjectHas, possessive };
+    }
   }
 
-  const [{ subjectHas, possessive }] = matches;
-  return { subjectHas, possessive };
+  return THEY;
 };
