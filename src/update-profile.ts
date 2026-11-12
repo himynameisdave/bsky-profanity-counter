@@ -14,8 +14,12 @@ const env = loadEnv();
  * Main function to update the bot's profile description with total profanity count
  */
 async function main() {
+  let failed = false;
+
   try {
     logger.info('🚀 Starting profile update process...');
+
+    db.init(env.database);
 
     // Create and authenticate the Bluesky agent
     const agent = await bsky.createAgent(env.bluesky);
@@ -29,10 +33,16 @@ async function main() {
     logger.success('✅ Profile update completed successfully');
   } catch (error) {
     logger.error(`❌ Profile update failed: ${describeError(error)}`);
-    process.exit(1);
+    failed = true;
   } finally {
-    // Clean up database connection
+    // Clean up database connection, whether or not the update worked
     await db.disconnect();
+  }
+
+  // Only once the pool is closed. Exiting straight away still beats waiting on a
+  // request withTimeout gave up on.
+  if (failed) {
+    process.exit(1);
   }
 }
 

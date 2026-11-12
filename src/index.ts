@@ -15,6 +15,7 @@ async function main() {
   try {
     // Throws before anything else happens if a variable is missing, so the run fails loudly
     const env = loadEnv();
+    db.init(env.database);
 
     // Put mentions left ANALYZING by a failed attempt or a dead run back in the queue
     const resetCount = await db.resetStuckMentions(STUCK_MENTION_TIMEOUT_MINUTES);

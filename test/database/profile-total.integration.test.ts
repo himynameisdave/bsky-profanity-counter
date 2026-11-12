@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { describe, it, expect, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import dotenv from 'dotenv';
 import * as db from '../../src/services/database.js';
 import { DUPLICATE_SNAPSHOT_REASON } from '../../src/services/identity-backfill.js';
+import type { PrismaClient } from '../../src/generated/prisma/client.js';
+import { createFixtureClient, testDatabase } from './postgres.js';
 
 dotenv.config({ quiet: true });
 
@@ -12,7 +13,7 @@ dotenv.config({ quiet: true });
 describe.skipIf(!process.env.DATABASE_URL || process.env.PROFILE_TOTAL_DATABASE_TESTS !== '1')(
   'profile total in PostgreSQL',
   () => {
-    const fixtures = new PrismaClient();
+    let fixtures: PrismaClient;
     const fixtureId = randomUUID().replaceAll('-', '');
     const handle = (name: string) => `${name}-${fixtureId}.bsky.social`;
     const analysisIds: string[] = [];
@@ -38,6 +39,11 @@ describe.skipIf(!process.env.DATABASE_URL || process.env.PROFILE_TOTAL_DATABASE_
       });
       analysisIds.push(row.id);
     };
+
+    beforeAll(() => {
+      db.init(testDatabase());
+      fixtures = createFixtureClient();
+    });
 
     afterAll(async () => {
       await fixtures.analysis.deleteMany({ where: { id: { in: analysisIds } } });

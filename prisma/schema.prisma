@@ -4,13 +4,20 @@
 // Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
+// Generated into src/ (and gitignored) so `pnpm build` compiles it to dist/ with
+// the rest of the app. ESM with `.js` imports, to match NodeNext.
 generator client {
-  provider = "prisma-client-js"
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  runtime             = "nodejs"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
 }
 
+// The connection URL lives in prisma.config.ts for the CLI, and is passed to the
+// pg adapter by src/services/database.ts at runtime
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum MentionStatus {

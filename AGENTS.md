@@ -53,10 +53,13 @@ to `dist/` with `tsconfig.build.json`. If you touch either tsconfig, run `pnpm b
 - The `@atproto/api` record types are loosely typed. Narrow them with a local type and a
   `typeof` check rather than casting to `any`.
 - Only the entry points read the environment, by calling `loadEnv()` from `src/config.ts` once
-  and passing values down (ie: `createAgent(env.bluesky)`). Nothing else in `src/` reads
-  `process.env` or calls `dotenv`. Limits worth tuning live in `src/config.ts` too.
+  and passing values down (ie: `createAgent(env.bluesky)`, `db.init(env.database)`). Nothing else
+  in `src/` reads `process.env` or calls `dotenv`. Limits worth tuning live in `src/config.ts` too.
 - Never hardcode the bot's handle or DID; read them from `agent.session`, so forks just work.
-- `src/services/database.ts` owns the one `PrismaClient`. Database access goes through it.
+- `src/services/database.ts` owns the one `PrismaClient`. Database access goes through it, and
+  an entry point calls `db.init()` before its first query and `db.disconnect()` when it's done.
+- Import Prisma's types from the generated client (`src/generated/prisma/client.js`), never from
+  `@prisma/client`. It's gitignored, so run `pnpm prisma:generate` after installing.
 
 ## Commits and PR titles
 

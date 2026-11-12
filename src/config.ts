@@ -30,13 +30,57 @@ export const FULL_RECOUNT_INTERVAL_MS = 30 * 24 * HOUR_MS;
 // (the scheduled workflow's timeout is 15 minutes).
 export const STUCK_MENTION_TIMEOUT_MINUTES = 20;
 
+// Most database connections one run opens. The bot makes one query at a time,
+// so it rarely needs more than one, but this leaves room without crowding a
+// hosted database's connection limit (the two workflows can overlap).
+export const DATABASE_POOL_MAX = 5;
+
+// How long to wait for a database connection, or for a free one in the pool,
+// before failing. The pg driver waits forever by default. This is long enough
+// for a hosted database waking from sleep, and far short of the workflow timeout.
+export const DATABASE_CONNECT_TIMEOUT_MS = 10_000;
+
 export type BlueskyCredentials = { identifier: string; password: string };
 
-export type Env = { bluesky: BlueskyCredentials };
+export type DatabaseConfig = {
+  // The whole connection string, password included. Never log it.
+  url: string;
+  // From the URL's `schema` parameter, which Prisma 6 read for us and the pg
+  // driver ignores
+  schema?: string;
+};
 
-// Prisma reads DATABASE_URL by itself when it first connects. We only check it's
-// set, so a run without it fails straight away with a clear message.
+export type Env = { bluesky: BlueskyCredentials; database: DatabaseConfig };
+
 const REQUIRED_ENV_VARS = ['BLUESKY_IDENTIFIER', 'BLUESKY_PASSWORD', 'DATABASE_URL'] as const;
+
+// Something we can safely quote in a search_path. Postgres allows more, but
+// nobody needs a schema called `my "schema"`.
+const SCHEMA_NAME = /^[A-Za-z_][\w$]*$/u;
+
+/**
+ * Checks DATABASE_URL is a Postgres connection string, and picks out the
+ * schema. Errors never include the URL, since it holds the password.
+ */
+export const parseDatabaseUrl = (value: string): DatabaseConfig => {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('🕵️ DATABASE_URL is not a valid URL');
+  }
+
+  if (url.protocol !== 'postgresql:' && url.protocol !== 'postgres:') {
+    throw new Error('🕵️ DATABASE_URL must start with postgresql:// or postgres://');
+  }
+
+  const schema = url.searchParams.get('schema') ?? undefined;
+  if (schema !== undefined && !SCHEMA_NAME.test(schema)) {
+    throw new Error('🕵️ DATABASE_URL has a schema parameter that is not a plain identifier');
+  }
+
+  return { url: value, ...(schema ? { schema } : {}) };
+};
 
 /**
  * Checks every environment variable the bot needs is set, and picks out the
@@ -54,6 +98,7 @@ export const parseEnv = (env: Record<string, string | undefined>): Env => {
       identifier: env.BLUESKY_IDENTIFIER ?? '',
       password: env.BLUESKY_PASSWORD ?? '',
     },
+    database: parseDatabaseUrl(env.DATABASE_URL ?? ''),
   };
 };
 
@@ -65,4 +110,16 @@ export const parseEnv = (env: Record<string, string | undefined>): Env => {
 export const loadEnv = (): Env => {
   dotenv.config({ quiet: true });
   return parseEnv(process.env);
+};
+
+/**
+ * Like loadEnv, for tools that only touch the database (ie: the read-only
+ * smoke check), so they don't need the bot's Bluesky password.
+ */
+export const loadDatabaseEnv = (): DatabaseConfig => {
+  dotenv.config({ quiet: true });
+  if (!process.env.DATABASE_URL) {
+    throw new Error('🕵️ Missing environment variables: DATABASE_URL');
+  }
+  return parseDatabaseUrl(process.env.DATABASE_URL);
 };

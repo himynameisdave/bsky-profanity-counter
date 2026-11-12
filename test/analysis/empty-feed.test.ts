@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AppBskyActorDefs, BskyAgent } from '@atproto/api';
-import type { Analysis, Mention } from '@prisma/client';
+import type { Analysis, Mention } from '../../src/generated/prisma/client.js';
 import type * as Db from '../../src/services/database.js';
 import type * as Bsky from '../../src/services/bluesky.js';
 

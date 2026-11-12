@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BskyAgent } from '@atproto/api';
-import type { Mention } from '@prisma/client';
+import type { Mention } from '../src/generated/prisma/client.js';
 import * as bsky from '../src/services/bluesky.js';
 import type * as Db from '../src/services/database.js';
 import { handleSelfTargeting } from '../src/services/self-targeting.js';

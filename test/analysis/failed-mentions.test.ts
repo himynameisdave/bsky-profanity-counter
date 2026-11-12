@@ -1,7 +1,7 @@
 import { XRPCError } from '@atproto/api';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AppBskyActorDefs, AppBskyFeedDefs, BskyAgent } from '@atproto/api';
-import type { Analysis, Mention } from '@prisma/client';
+import type { Analysis, Mention } from '../../src/generated/prisma/client.js';
 import type * as Db from '../../src/services/database.js';
 import type * as Bsky from '../../src/services/bluesky.js';
 import type * as Profanity from '../../src/services/profanity.js';

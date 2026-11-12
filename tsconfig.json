@@ -10,5 +10,12 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["src/**/*", "scripts/**/*", "test/**/*", "oxlint.config.ts", "vitest.config.ts"]
+  "include": [
+    "src/**/*",
+    "scripts/**/*",
+    "test/**/*",
+    "oxlint.config.ts",
+    "prisma.config.ts",
+    "vitest.config.ts"
+  ]
 }

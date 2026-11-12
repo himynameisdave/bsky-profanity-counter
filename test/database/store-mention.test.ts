@@ -1,18 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Mention, Prisma, PrismaClient } from '@prisma/client';
+import type { Mention, Prisma, PrismaClient } from '../../src/generated/prisma/client.js';
 
 const { createMany, findUniqueOrThrow } = vi.hoisted(() => ({
   createMany: vi.fn<(args: Prisma.MentionCreateManyArgs) => Promise<Prisma.BatchPayload>>(),
   findUniqueOrThrow: vi.fn<(args: Prisma.MentionFindUniqueOrThrowArgs) => Promise<Mention>>(),
 }));
 
-vi.mock(import('@prisma/client'), () => ({
+vi.mock(import('../../src/generated/prisma/client.js'), () => ({
   PrismaClient: class {
     mention = { createMany, findUniqueOrThrow };
   } as unknown as typeof PrismaClient,
 }));
 
-const { storeMention } = await import('../../src/services/database.js');
+const { init, storeMention } = await import('../../src/services/database.js');
+init({ url: 'postgresql://test:test@localhost:5432/test' });
 
 const mention = {
   did: 'did:plc:someone',

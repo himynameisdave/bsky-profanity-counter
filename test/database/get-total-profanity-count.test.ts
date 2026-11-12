@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Prisma } from '@prisma/client';
-import type { PrismaClient } from '@prisma/client';
+import { Prisma } from '../../src/generated/prisma/client.js';
+import type { PrismaClient } from '../../src/generated/prisma/client.js';
 import { DUPLICATE_SNAPSHOT_REASON } from '../../src/services/identity-backfill.js';
 
 const { queryRaw } = vi.hoisted(() => ({
@@ -10,7 +10,7 @@ const { queryRaw } = vi.hoisted(() => ({
     >(),
 }));
 
-vi.mock(import('@prisma/client'), async (importOriginal) => ({
+vi.mock(import('../../src/generated/prisma/client.js'), async (importOriginal) => ({
   ...(await importOriginal()),
   // Just enough of a client for the query under test
   PrismaClient: class {
@@ -18,7 +18,8 @@ vi.mock(import('@prisma/client'), async (importOriginal) => ({
   } as unknown as typeof PrismaClient,
 }));
 
-const { getTotalProfanityCount } = await import('../../src/services/database.js');
+const { init, getTotalProfanityCount } = await import('../../src/services/database.js');
+init({ url: 'postgresql://test:test@localhost:5432/test' });
 
 // The query as Postgres gets it, with nested fragments flattened
 const sentQuery = () => {
