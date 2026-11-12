@@ -53,7 +53,11 @@ const toWords = (raw: string) =>
  *   (ie: `xe` on its own), it's "they"
  */
 export const parsePronouns = (raw: string | undefined): Pronouns => {
-  const words = toWords(raw ?? '');
+  if (!raw) {
+    return THEY;
+  }
+
+  const words = toWords(raw);
 
   if (words.some((word) => NEGATIONS.has(word) || THEY_WORDS.has(word))) {
     return THEY;
