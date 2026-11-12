@@ -38,6 +38,9 @@ to `dist/` with `tsconfig.build.json`. If you touch either tsconfig, run `pnpm b
 - Tests live in `test/`, mirroring `src/`.
 - Tests must not require a live database or network. Anything that does gets guarded with
   `describe.skipIf(...)` so CI stays green (see `test/database/db-query.test.ts`).
+- Test files share workers (`isolate: false` in `vitest.config.ts`). `test/setup.ts` resets the
+  module cache before each file, so `vi.mock` works as usual, but globals aren't reset. Anything
+  a test changes on `process`, the environment or the clock has to be put back in an `afterEach`.
 - Tests are typechecked, so type mocks against the real thing:
   `vi.fn<typeof Db.storeMention>()`, with `import type * as Db from '../src/services/database.js'`.
 
