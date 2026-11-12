@@ -3,6 +3,7 @@ import type { Analysis, Mention } from '@prisma/client';
 import * as db from './services/database.js';
 import * as bsky from './services/bluesky.js';
 import * as profanity from './services/profanity.js';
+import * as pronouns from './services/pronouns.js';
 import * as logger from './services/logger.js';
 import { handleSelfTargeting } from './services/self-targeting.js';
 import { replyToMention } from './services/reply.js';
@@ -82,8 +83,14 @@ async function giveUpOnMention(mention: Mention) {
   }
 }
 
-/** Fetch the display handle at reply time; never resolve it to choose identity. */
-async function refreshTarget(agent: BskyAgent, mention: Mention): Promise<Mention> {
+/**
+ * Fetch the display handle and pronouns at reply time; never resolve the handle
+ * to choose identity.
+ */
+async function refreshTarget(
+  agent: BskyAgent,
+  mention: Mention,
+): Promise<{ target: Mention; pronouns: pronouns.Pronouns }> {
   if (!mention.did) {
     throw new TerminalMentionError('Missing trustworthy target DID');
   }
@@ -92,7 +99,10 @@ async function refreshTarget(agent: BskyAgent, mention: Mention): Promise<Mentio
     throw new TerminalMentionError('Profile DID does not match the recorded target');
   }
   await db.refreshTargetHandle(mention.id, mention.did, profile.handle);
-  return { ...mention, userHandle: profile.handle };
+  return {
+    target: { ...mention, userHandle: profile.handle },
+    pronouns: pronouns.parsePronouns(profile.pronouns),
+  };
 }
 
 /**
@@ -119,7 +129,10 @@ async function processMention(agent: BskyAgent, mention: Mention) {
     const existing = await db.findAnalysis(mention.did);
 
     if (existing && Date.now() - existing.lastAnalyzedAt.getTime() < ANALYSIS_CACHE_TTL_MS) {
-      const targetMention = await refreshTarget(agent, mention);
+      const { target: targetMention, pronouns: targetPronouns } = await refreshTarget(
+        agent,
+        mention,
+      );
       logger.info(`✨ Found freshly cached analysis for ${mention.userHandle}`);
 
       // Generate the response message using the existing analysis
@@ -138,6 +151,7 @@ async function processMention(agent: BskyAgent, mention: Mention) {
         },
         targetMention.userHandle,
         existing.totalPosts,
+        targetPronouns,
       );
 
       const outcome = await replyToMention(agent, targetMention, responseMessage, existing.id);
@@ -159,7 +173,10 @@ async function processMention(agent: BskyAgent, mention: Mention) {
       const analysis = profanity.analyzePosts(posts, previous?.days);
 
       // Refresh after the feed scan, which can take minutes on a full count.
-      const targetMention = await refreshTarget(agent, mention);
+      const { target: targetMention, pronouns: targetPronouns } = await refreshTarget(
+        agent,
+        mention,
+      );
 
       // Store the analysis in the database
       const dbAnalysis = await db.createOrUpdateAnalysis({
@@ -182,6 +199,7 @@ async function processMention(agent: BskyAgent, mention: Mention) {
         analysis,
         targetMention.userHandle,
         analysis.postCount,
+        targetPronouns,
       );
 
       const outcome = await replyToMention(agent, targetMention, responseMessage, dbAnalysis.id);

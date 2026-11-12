@@ -6,6 +6,7 @@ import {
   renderWord,
   type ProfanityAnalysis,
 } from '../src/services/profanity.js';
+import { parsePronouns, THEY } from '../src/services/pronouns.js';
 import type { AppBskyFeedDefs } from '@atproto/api';
 import BAD_WORDS from '../src/data/badWords.js';
 import UNQUOTABLE_WORDS from '../src/data/unquotableWords.js';
@@ -209,7 +210,7 @@ describe('Profanity Service', () => {
       };
 
       const username = 'testuser';
-      const message = generateResponseMessage(analysis, username, 20);
+      const message = generateResponseMessage(analysis, username, 20, THEY);
 
       // Check if message contains the medal emojis
       expect(message).toContain('🥇');
@@ -234,7 +235,7 @@ describe('Profanity Service', () => {
       };
 
       const username = 'gooduser';
-      const message = generateResponseMessage(analysis, username, 20);
+      const message = generateResponseMessage(analysis, username, 20, THEY);
 
       expect(message).toContain('good citizen');
       expect(message).not.toContain('🥇');
@@ -276,7 +277,7 @@ describe('Profanity Service', () => {
         postCount: 20,
       };
 
-      const message = generateResponseMessage(analysis, 'testuser', 20);
+      const message = generateResponseMessage(analysis, 'testuser', 20, THEY);
 
       expect(message).not.toContain(word);
       expect(message).toContain(`🥇 "${renderWord(word)}" (3 times)`);
@@ -291,7 +292,7 @@ describe('Profanity Service', () => {
           postCount: 20,
         };
 
-        expect(generateResponseMessage(analysis, 'testuser', 20)).not.toContain(word);
+        expect(generateResponseMessage(analysis, 'testuser', 20, THEY)).not.toContain(word);
       }
     });
 
@@ -303,11 +304,52 @@ describe('Profanity Service', () => {
         postCount: 0,
       };
 
-      const message = generateResponseMessage(analysis, 'quiet.bsky.social', 0);
+      const message = generateResponseMessage(analysis, 'quiet.bsky.social', 0, THEY);
 
       expect(message).toBe(
         'No original posts found for @quiet.bsky.social in the last year to analyze.',
       );
+    });
+
+    describe('pronouns', () => {
+      const swears: ProfanityAnalysis = {
+        totalCount: 42,
+        wordCounts: { damn: 42 },
+        topThree: [{ word: 'damn', count: 42, rank: 1 }],
+        postCount: 1000,
+      };
+      const clean: ProfanityAnalysis = {
+        totalCount: 0,
+        wordCounts: {},
+        topThree: [],
+        postCount: 1000,
+      };
+
+      it.each([
+        [undefined, "They've used 42 profanities in their last 1,000 posts."],
+        ['she/her', "She's used 42 profanities in her last 1,000 posts."],
+        ['he/him', "He's used 42 profanities in his last 1,000 posts."],
+        ['it/its', "It's used 42 profanities in its last 1,000 posts."],
+        ['xe/xem', "Xe's used 42 profanities in xyr last 1,000 posts."],
+        ['ze/zir', "Ze's used 42 profanities in zir last 1,000 posts."],
+      ])('uses %s pronouns when someone swears', (raw, expected) => {
+        expect(
+          generateResponseMessage(swears, 'someone.bsky.social', 1000, parsePronouns(raw)),
+        ).toContain(`@someone.bsky.social has swears! ${expected}`);
+      });
+
+      it.each([
+        [undefined, 'their'],
+        ['she/her', 'her'],
+        ['he/him', 'his'],
+        ['xe/xir', 'xir'],
+      ])('uses %s pronouns for a good citizen', (raw, possessive) => {
+        expect(
+          generateResponseMessage(clean, 'someone.bsky.social', 1000, parsePronouns(raw)),
+        ).toBe(
+          `@someone.bsky.social has been a good citizen!\nNo profanity found in ${possessive} last 1,000 posts.`,
+        );
+      });
     });
   });
 

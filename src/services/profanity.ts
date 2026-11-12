@@ -8,6 +8,7 @@ import {
 } from 'obscenity';
 import BAD_WORDS from '../data/badWords.js';
 import UNQUOTABLE_WORDS from '../data/unquotableWords.js';
+import type { Pronouns } from './pronouns.js';
 
 // Type for profanity analysis results
 export type ProfanityAnalysis = {
@@ -197,11 +198,13 @@ const maskWord = (word: string) =>
 export const renderWord = (word: string): string =>
   UNQUOTABLE_WORDS.has(word) ? maskWord(word) : word;
 
-// Generate a response message based on the analysis
+// Generate a response message based on the analysis, using the target's
+// pronouns (see parsePronouns)
 export const generateResponseMessage = (
   analysis: ProfanityAnalysis,
   username: string,
   postCount: number,
+  pronouns: Pronouns,
 ): string => {
   // Zero posts isn't proof they never swear, so don't call them a good citizen
   if (postCount === 0) {
@@ -209,10 +212,10 @@ export const generateResponseMessage = (
   }
 
   if (analysis.totalCount === 0) {
-    return `@${username} has been a good citizen!\nNo profanity found in their last ${postCount.toLocaleString('en-CA')} posts.`;
+    return `@${username} has been a good citizen!\nNo profanity found in ${pronouns.possessive} last ${postCount.toLocaleString('en-CA')} posts.`;
   }
 
-  let message = `@${username} has swears! They've used ${analysis.totalCount.toLocaleString('en-CA')} profanities in their last ${postCount.toLocaleString('en-CA')} posts.`;
+  let message = `@${username} has swears! ${pronouns.subjectHas} used ${analysis.totalCount.toLocaleString('en-CA')} profanities in ${pronouns.possessive} last ${postCount.toLocaleString('en-CA')} posts.`;
 
   // Add top three profanities with medal emojis if available
   if (analysis.topThree.length > 0) {

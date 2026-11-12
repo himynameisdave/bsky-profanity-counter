@@ -44,6 +44,7 @@ vi.mock(import('../src/services/logger.js'), () => ({
 }));
 
 const { processUnanalyzedMentions } = await import('../src/analysis.js');
+const profanity = vi.mocked(await import('../src/services/profanity.js'));
 
 // Deliberately not profanity.accountant: someone running their own copy of the
 // bot logs in as their own account, and the self-check has to follow it
@@ -128,6 +129,70 @@ describe('processUnanalyzedMentions when someone asks the bot to audit itself', 
       agent,
       'did:plc:profanity.accountant',
       undefined,
+    );
+  });
+});
+
+// Every profile lookup returns these pronouns
+const profileWith = (pronouns: string) =>
+  bsky.getProfile.mockImplementation(
+    async (_agent, did) =>
+      ({
+        did,
+        handle: did.slice('did:plc:'.length),
+        pronouns,
+      }) as AppBskyActorDefs.ProfileViewDetailed,
+  );
+
+describe("processUnanalyzedMentions uses the target's pronouns", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    db.findAnalysis.mockResolvedValue(null);
+    db.createOrUpdateAnalysis.mockResolvedValue({ id: 'analysis' } as Analysis);
+    bsky.getUserPosts.mockResolvedValue([{ uri: 'post' } as AppBskyFeedDefs.PostView]);
+    bsky.getPost.mockResolvedValue(MENTION_POST);
+    bsky.replyToPost.mockResolvedValue({
+      uri: 'at://did:plc:counter/app.bsky.feed.post/reply',
+      cid: 'bafy-reply',
+    });
+  });
+
+  it('when counting their posts', async () => {
+    profileWith('she/her');
+    queue(makeMention('someone.bsky.social'));
+
+    await processUnanalyzedMentions(agent);
+
+    expect(profanity.generateResponseMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      'someone.bsky.social',
+      1,
+      { subjectHas: "She's", possessive: 'her' },
+    );
+  });
+
+  it('when reusing a cached analysis', async () => {
+    profileWith('he/him');
+    db.findAnalysis.mockResolvedValue({
+      id: 'analysis',
+      did: 'did:plc:someone.bsky.social',
+      userHandle: 'someone.bsky.social',
+      totalPosts: 20,
+      profanityCount: 0,
+      profanityDetails: { wordCounts: {}, topProfanities: [] },
+      lastAnalyzedAt: new Date(),
+    } as unknown as Analysis);
+    queue(makeMention('someone.bsky.social'));
+
+    await processUnanalyzedMentions(agent);
+
+    expect(bsky.getUserPosts).not.toHaveBeenCalled();
+    expect(profanity.generateResponseMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      'someone.bsky.social',
+      20,
+      { subjectHas: "He's", possessive: 'his' },
     );
   });
 });
