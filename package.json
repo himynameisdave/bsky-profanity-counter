@@ -30,7 +30,7 @@
   "dependencies": {
     "@atproto/api": "^0.30.3",
     "@prisma/client": "^6.11.1",
-    "dotenv": "^17.0.1",
+    "dotenv": "^18.0.10",
     "loggit": "^1.1.1",
     "obscenity": "^0.4.6"
   },
