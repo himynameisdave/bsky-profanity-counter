@@ -1,11 +1,12 @@
 import {
   AppBskyNotificationListNotifications,
   BskyAgent,
+  RichText,
   XRPCError,
   type AppBskyFeedDefs,
-  type AppBskyRichtextFacet,
 } from '@atproto/api';
 import * as logger from './logger.js';
+import * as postText from './post-text.js';
 import { describeError, isTerminalMentionError, TerminalMentionError } from '../errors.js';
 import { BLUESKY_SERVICE, MAX_POSTS } from '../config.js';
 import { getYearCutoff } from './profanity.js';
@@ -627,24 +628,27 @@ export const replyToPost = async (
 ) => {
   logger.info(`🗣️ Replying to ${replyTo.uri}...`);
 
-  const graphemes = [...new Intl.Segmenter().segment(text)].length;
-  if (graphemes > 300 || Buffer.byteLength(text, 'utf8') > 3000) {
+  if (!postText.fits(text)) {
     throw new TerminalMentionError('Reply exceeds Bluesky text limits');
   }
 
-  // The handle is verbatim display text. Never resolve it again to choose the
+  // Facet offsets are UTF-8 bytes, so let RichText convert them from string
+  // indices. We don't use its detectFacets: it resolves each handle again, and
+  // the handle is verbatim display text. Never resolve it again to choose the
   // facet identity: it may have been reassigned since we fetched the profile.
-  const facets: AppBskyRichtextFacet.Main[] = [];
+  const rt = new RichText({ text });
   const label = target ? `@${target.handle}` : '';
-  const start = label ? text.indexOf(label) : -1;
+  const start = label ? rt.text.indexOf(label) : -1;
   if (target && start >= 0) {
-    facets.push({
-      index: {
-        byteStart: Buffer.byteLength(text.slice(0, start), 'utf8'),
-        byteEnd: Buffer.byteLength(text.slice(0, start + label.length), 'utf8'),
+    rt.facets = [
+      {
+        index: {
+          byteStart: rt.unicodeText.utf16IndexToUtf8Index(start),
+          byteEnd: rt.unicodeText.utf16IndexToUtf8Index(start + label.length),
+        },
+        features: [{ $type: 'app.bsky.richtext.facet#mention', did: target.did }],
       },
-      features: [{ $type: 'app.bsky.richtext.facet#mention', did: target.did }],
-    });
+    ];
   }
 
   // Set up the reply structure, keeping the bot's reply in the same thread
@@ -655,8 +659,10 @@ export const replyToPost = async (
   try {
     return await withTimeout(REQUEST_TIMEOUT_MS, () =>
       agent.post({
-        text,
-        facets: facets.length > 0 ? facets : undefined,
+        text: rt.text,
+        facets: rt.facets,
+        // Every reply is in English, which helps feeds and translation tools
+        langs: ['en'],
         reply,
       }),
     );
