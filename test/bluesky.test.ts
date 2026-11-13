@@ -107,6 +107,7 @@ describe('Replying to a mention', () => {
     expect(agent.post).toHaveBeenCalledWith({
       text: 'Beep boop.',
       facets: undefined,
+      langs: ['en'],
       reply: {
         parent: MENTION,
         root: THREAD_ROOT,
@@ -122,6 +123,7 @@ describe('Replying to a mention', () => {
     expect(agent.post).toHaveBeenCalledWith({
       text: 'Beep boop.',
       facets: undefined,
+      langs: ['en'],
       reply: {
         parent: MENTION,
         root: MENTION,
@@ -152,11 +154,49 @@ describe('reply identity facets', () => {
     );
   });
 
+  it('puts the facet at the right UTF-8 bytes behind multi-byte emoji', async () => {
+    const post = vi.fn<BskyAgent['post']>().mockResolvedValue({ uri: 'at://reply', cid: 'cid' });
+    // A medal, a flag and a ZWJ family: 4, 8 and 18 bytes, but 2, 4 and 8 UTF-16 code units
+    const prefix = '🥇🇨🇦👨‍👩‍👧 ';
+    const handle = 'someone.bsky.social';
+    await replyToPost(
+      { post } as unknown as BskyAgent,
+      topLevelMentionPost(),
+      `${prefix}@${handle} has swears!`,
+      {
+        did: 'did:plc:someone',
+        handle,
+      },
+    );
+
+    const encoder = new TextEncoder();
+    const byteStart = encoder.encode(prefix).length;
+    expect(byteStart).not.toBe(prefix.length);
+    expect(post).toHaveBeenCalledWith(
+      expect.objectContaining({
+        facets: [
+          {
+            index: { byteStart, byteEnd: byteStart + encoder.encode(`@${handle}`).length },
+            features: [{ $type: 'app.bsky.richtext.facet#mention', did: 'did:plc:someone' }],
+          },
+        ],
+      }),
+    );
+  });
+
   it('fails oversized outgoing text before asking Bluesky to post it', async () => {
     const post = vi.fn<BskyAgent['post']>();
     await expect(
       replyToPost({ post } as unknown as BskyAgent, topLevelMentionPost(), 'a'.repeat(301)),
     ).rejects.toThrow('Reply exceeds Bluesky text limits');
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it('counts graphemes rather than code units, so emoji-heavy text still fits', async () => {
+    const post = vi.fn<BskyAgent['post']>().mockResolvedValue({ uri: 'at://reply', cid: 'cid' });
+    // 300 graphemes, but 600 UTF-16 code units and 1,200 bytes
+    const text = '🥇'.repeat(300);
+    await replyToPost({ post } as unknown as BskyAgent, topLevelMentionPost(), text);
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ text }));
   });
 });
