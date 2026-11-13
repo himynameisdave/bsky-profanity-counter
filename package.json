@@ -38,7 +38,7 @@
     "@himynameisdave/oxlint-config": "~2.3.0",
     "@types/node": "^22.16.0",
     "oxfmt": "^0.77.0",
-    "oxlint": "^1.92.0",
+    "oxlint": "^1.93.0",
     "prisma": "^6.11.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
