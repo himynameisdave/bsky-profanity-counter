@@ -81,6 +81,7 @@ describe('setting up the database service', () => {
     expect(options).toStrictEqual({ schema: 'public' });
     expect(mocks.newClient).toHaveBeenCalledExactlyOnceWith({
       adapter: mocks.newAdapter.mock.instances[0],
+      transactionOptions: { maxWait: DATABASE_CONNECT_TIMEOUT_MS },
     });
     await expect(db.getUnprocessedMentionsCount()).resolves.toBe(3);
   });

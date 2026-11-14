@@ -55,7 +55,12 @@ export function init(config: DatabaseConfig) {
     },
     { schema },
   );
-  client = new PrismaClient({ adapter });
+  client = new PrismaClient({
+    adapter,
+    // Starting a transaction can mean opening a connection, since pg closes idle
+    // ones after 10s, so give it as long as a connection gets rather than Prisma's 2s
+    transactionOptions: { maxWait: DATABASE_CONNECT_TIMEOUT_MS },
+  });
 }
 
 const quoteIdentifier = (name: string) => `"${name.replaceAll('"', '""')}"`;
