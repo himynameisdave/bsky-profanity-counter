@@ -73,6 +73,13 @@ describe(parseDatabaseUrl, () => {
     });
   });
 
+  // Prisma 6 took these, so an existing URL with one has to keep working
+  it('takes a schema name with a dash in it', () => {
+    expect(parseDatabaseUrl(`${DATABASE_URL}?schema=profanity-bot`)).toMatchObject({
+      schema: 'profanity-bot',
+    });
+  });
+
   it('refuses a schema it could not safely quote', () => {
     expect(() => parseDatabaseUrl(`${DATABASE_URL}?schema=a%22%3B%20drop`)).toThrow(
       'schema parameter that is not a plain identifier',

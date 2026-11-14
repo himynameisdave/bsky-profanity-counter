@@ -56,7 +56,7 @@ const REQUIRED_ENV_VARS = ['BLUESKY_IDENTIFIER', 'BLUESKY_PASSWORD', 'DATABASE_U
 
 // A schema name we can safely quote into raw SQL. Postgres allows more, but
 // nobody needs a schema called `my "schema"`.
-const SCHEMA_NAME = /^[A-Za-z_][\w$]*$/u;
+const SCHEMA_NAME = /^[A-Za-z_][\w$-]*$/u;
 
 // Where it's fine to connect without TLS. The pg driver only uses TLS when the
 // URL asks for it, where Prisma 6 tried it by default.
