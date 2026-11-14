@@ -63,14 +63,13 @@ You too can run your very own profanity accountant!
    cp .env.example .env
    ```
 
-4. Generate the Prisma client and create the tables:
+4. Create the tables:
 
    ```
-   pnpm prisma:generate
    pnpm db:push
    ```
 
-   `prisma:generate` writes the client to `src/generated/prisma`, which isn't checked in, so run it after every fresh install. It doesn't need a database.
+   `pnpm install` already generated the Prisma client into `src/generated/prisma`, which isn't checked in. Run `pnpm prisma:generate` to regenerate it; it doesn't need a database.
 
    There are no migration files, so `db:push` is how the schema gets to the database. It only syncs the tables and never regenerates the client, so whenever `prisma/schema.prisma` changes, run both again.
 

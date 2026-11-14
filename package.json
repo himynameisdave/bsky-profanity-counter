@@ -5,7 +5,7 @@
   "description": "🤬 A bot for Bluesky which tells you how much profanity a user has posted..",
   "type": "module",
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks",
+    "prepare": "git config core.hooksPath .githooks && prisma generate",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint -c oxlint.config.ts --deny-warnings",

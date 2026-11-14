@@ -59,7 +59,8 @@ to `dist/` with `tsconfig.build.json`. If you touch either tsconfig, run `pnpm b
 - `src/services/database.ts` owns the one `PrismaClient`. Database access goes through it, and
   an entry point calls `db.init()` before its first query and `db.disconnect()` when it's done.
 - Import Prisma's types from the generated client (`src/generated/prisma/client.js`), never from
-  `@prisma/client`. It's gitignored, so run `pnpm prisma:generate` after installing.
+  `@prisma/client`. It's gitignored; `pnpm install`
+  generates it, and `pnpm prisma:generate` regenerates it.
 
 ## Commits and PR titles
 
