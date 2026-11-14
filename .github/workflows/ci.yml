@@ -97,6 +97,7 @@ jobs:
         env:
           PROFILE_TOTAL_DATABASE_TESTS: '1'
           MENTION_IDENTITY_DATABASE_TESTS: '1'
+          PRISMA_ADAPTER_DATABASE_TESTS: '1'
 
       # Production compiles with tsconfig.build.json, which typecheck doesn't exercise
       - name: Build
