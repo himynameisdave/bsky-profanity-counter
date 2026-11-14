@@ -101,7 +101,7 @@ All three are required. The bot refuses to start, and names whichever are missin
 
 The bot talks to Postgres through the `pg` driver (via Prisma's `@prisma/adapter-pg`), which reads the URL a little differently from what you might expect:
 
-- **TLS is off unless the URL asks for it.** Add `?sslmode=verify-full` for anything that isn't on your machine. `sslmode=require` currently means the same thing in `pg` (and logs a warning about it).
+- **TLS is off unless the URL asks for it.** Add `?sslmode=verify-full` for anything that isn't on your machine; the bot won't start without an `sslmode` there. `sslmode=require` currently means the same thing in `pg` (and logs a warning about it).
 - **The certificate is checked** against Node's built-in CAs. If your provider signs with its own CA, download its CA certificate and set `NODE_EXTRA_CA_CERTS=/path/to/ca.pem`. On GitHub Actions, put the certificate itself in a `DATABASE_CA_CERT` secret and the workflows do that for you.
 - **Prisma-only options do nothing.** `connection_limit`, `pool_timeout`, `connect_timeout`, `pgbouncer` and `sslaccept` are ignored. The pool size and connection timeout live in `src/config.ts`. `schema` still works.
 

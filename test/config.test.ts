@@ -50,6 +50,15 @@ describe(parseDatabaseUrl, () => {
     expect(parseDatabaseUrl(url)).toStrictEqual({ url });
   });
 
+  it.each(['verify-full', 'disable'])(
+    'lets another machine through once the URL says sslmode=%s',
+    (mode) => {
+      const url = `postgresql://root:s3cret-pa55@db.example.com/db?sslmode=${mode}`;
+
+      expect(parseDatabaseUrl(url)).toStrictEqual({ url });
+    },
+  );
+
   it('accepts the postgres:// spelling too', () => {
     expect(parseDatabaseUrl('postgres://localhost/db')).toStrictEqual({
       url: 'postgres://localhost/db',
@@ -73,6 +82,11 @@ describe(parseDatabaseUrl, () => {
   it.each([
     ['not a URL at all', 's3cret-pa55 at localhost', 'DATABASE_URL is not a valid URL'],
     ['another database', 'mysql://root:s3cret-pa55@localhost/db', 'must start with postgresql://'],
+    [
+      'another machine without sslmode',
+      'postgresql://root:s3cret-pa55@db.example.com/db',
+      'has no sslmode',
+    ],
   ])('rejects %s without repeating the URL', (_, url, message) => {
     expect(() => parseDatabaseUrl(url)).toThrow(message);
     expect(() => parseDatabaseUrl(url)).not.toThrow(/s3cret-pa55|localhost/u);

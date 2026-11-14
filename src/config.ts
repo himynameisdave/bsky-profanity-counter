@@ -58,6 +58,10 @@ const REQUIRED_ENV_VARS = ['BLUESKY_IDENTIFIER', 'BLUESKY_PASSWORD', 'DATABASE_U
 // nobody needs a schema called `my "schema"`.
 const SCHEMA_NAME = /^[A-Za-z_][\w$]*$/u;
 
+// Where it's fine to connect without TLS. The pg driver only uses TLS when the
+// URL asks for it, where Prisma 6 tried it by default.
+const LOCAL_HOSTS = new Set(['', 'localhost', '127.0.0.1', '[::1]']);
+
 /**
  * Checks DATABASE_URL is a Postgres connection string, and picks out the
  * schema. Errors never include the URL, since it holds the password.
@@ -72,6 +76,13 @@ export const parseDatabaseUrl = (value: string): DatabaseConfig => {
 
   if (url.protocol !== 'postgresql:' && url.protocol !== 'postgres:') {
     throw new Error('🕵️ DATABASE_URL must start with postgresql:// or postgres://');
+  }
+
+  // Rather than quietly send the password to another machine in plain text
+  if (!url.searchParams.has('sslmode') && !LOCAL_HOSTS.has(url.hostname)) {
+    throw new Error(
+      '🕵️ DATABASE_URL points at another machine but has no sslmode; add ?sslmode=verify-full (or sslmode=disable if you mean it)',
+    );
   }
 
   const schema = url.searchParams.get('schema') ?? undefined;
