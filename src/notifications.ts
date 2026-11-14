@@ -1,5 +1,5 @@
 import type { BskyAgent } from '@atproto/api';
-import type { NotificationScan } from '@prisma/client';
+import type { NotificationScan } from './generated/prisma/client.js';
 import * as bsky from './services/bluesky.js';
 import * as db from './services/database.js';
 import * as logger from './services/logger.js';

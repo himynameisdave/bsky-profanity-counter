@@ -72,7 +72,7 @@ const prisma = (): PrismaClient => {
 
 /** Where this bot paused collecting unread notifications, if it hasn't finished. */
 export async function getNotificationScan(botDid: string) {
-  return prisma.notificationScan.findUnique({ where: { botDid } });
+  return prisma().notificationScan.findUnique({ where: { botDid } });
 }
 
 /** Call only after every mention on the page has been persisted. */
@@ -82,7 +82,7 @@ export async function saveNotificationScan(
   latestIndexedAt: string | null,
 ) {
   const data = { cursor, latestIndexedAt };
-  return prisma.notificationScan.upsert({
+  return prisma().notificationScan.upsert({
     where: { botDid },
     create: { botDid, ...data },
     update: data,
@@ -91,7 +91,7 @@ export async function saveNotificationScan(
 
 /** Clear only after Bluesky accepts the completed scan's read acknowledgement. */
 export async function clearNotificationScan(botDid: string) {
-  return prisma.notificationScan.deleteMany({ where: { botDid } });
+  return prisma().notificationScan.deleteMany({ where: { botDid } });
 }
 
 /**
