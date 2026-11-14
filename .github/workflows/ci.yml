@@ -77,6 +77,7 @@ jobs:
         run: pnpm test
         env:
           PROFILE_TOTAL_DATABASE_TESTS: '1'
+          NOTIFICATION_SCAN_DATABASE_TESTS: '1'
 
       # Test files share workers, so this runs them all in one worker, shuffled with a fixed
       # seed, to catch state leaking from one file into the next. A single worker also keeps

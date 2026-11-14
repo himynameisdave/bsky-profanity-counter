@@ -21,6 +21,16 @@ enum MentionStatus {
   FAILED
 }
 
+// A paused walk through one bot's unread notifications. Only advance this after
+// every mention on the preceding page is safely stored. Keep the API timestamp
+// verbatim so a read acknowledgement doesn't lose precision in a DateTime column.
+model NotificationScan {
+  botDid          String   @id
+  cursor          String
+  latestIndexedAt String?
+  updatedAt       DateTime @updatedAt
+}
+
 model Mention {
   id            String        @id @default(cuid())
   did           String?       // Target identity; null only for quarantined legacy mentions

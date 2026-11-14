@@ -3,14 +3,10 @@ import { describe, it, expect, vi, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 import type { BskyAgent } from '@atproto/api';
-import type * as Bsky from '../../src/services/bluesky.js';
 import type { Notification } from '../../src/types.js';
 import * as db from '../../src/services/database.js';
 import storeMentions from '../../src/mentions.js';
 
-vi.mock(import('../../src/services/bluesky.js'), () => ({
-  markNotificationsAsRead: vi.fn<typeof Bsky.markNotificationsAsRead>(),
-}));
 vi.mock(import('../../src/services/logger.js'), () => ({
   info: vi.fn<() => void>(),
   success: vi.fn<() => void>(),
@@ -18,7 +14,6 @@ vi.mock(import('../../src/services/logger.js'), () => ({
   error: vi.fn<() => void>(),
 }));
 
-const bsky = await import('../../src/services/bluesky.js');
 dotenv.config({ quiet: true });
 
 // Explicit opt-in as well as DATABASE_URL: these tests write isolated fixtures.
@@ -58,8 +53,8 @@ describe.skipIf(!process.env.DATABASE_URL || process.env.MENTION_IDENTITY_DATABA
       }));
       const agent = {} as BskyAgent;
 
-      await storeMentions(agent, notifications, notifications[0].indexedAt);
-      await storeMentions(agent, notifications, notifications[0].indexedAt);
+      await expect(storeMentions(agent, notifications)).resolves.toBe(true);
+      await expect(storeMentions(agent, notifications)).resolves.toBe(true);
       const replays = await Promise.all(
         Array.from({ length: 8 }, (_, index) => db.storeMention(inputs[index % 2])),
       );
@@ -76,7 +71,6 @@ describe.skipIf(!process.env.DATABASE_URL || process.env.MENTION_IDENTITY_DATABA
         new Set(queued.map((row) => row.id)),
       );
       expect(queued.every((row) => row.postId === '3abc' && row.attempts === 0)).toBe(true);
-      expect(bsky.markNotificationsAsRead).toHaveBeenCalledWith(agent, notifications[0].indexedAt);
     });
 
     it('arbitrates concurrent first inserts using the URI unique constraint', async () => {

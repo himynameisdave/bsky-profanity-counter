@@ -89,39 +89,21 @@ async function getParentAuthor(
 }
 
 /**
- * Takes each notification from Bluesky, converts it to our Mention format,
- * and stores it in the database.
- *
- * `latestIndexedAt` is the newest notification in the batch we fetched (see
- * bsky.getMentions). Once everything is safely stored we mark notifications as
- * read up to that point — never up to "now", which would swallow anything that
- * arrived while this run was in flight.
+ * Store every mention on a fetched page. A false result leaves collection on
+ * this same page for another attempt; it mustn't advance either cursor.
  */
 export default async function storeMentions(
   agent: BskyAgent,
   mentions: Notification[],
-  latestIndexedAt: string | null,
-) {
-  if (!latestIndexedAt) {
-    // Nothing was fetched, so there's no read cursor to advance
-    return;
-  }
-
-  // Process mentions sequentially, oldest first: the read cursor can only move
-  // past a mention once that mention is actually in the database
+): Promise<boolean> {
   const ordered = mentions.toSorted((a, b) => Date.parse(a.indexedAt) - Date.parse(b.indexedAt));
-
-  let lastStoredIndexedAt: string | null = null;
-  let firstFailure: Notification | null = null;
+  let allStored = true;
 
   for (const mention of ordered) {
     try {
-      // Start with basic mention info
       const mentionData = notificationToMention(mention);
-
-      // If this is a reply, we analyze the parent post author instead
       if (mentionData.isReply) {
-        // Deliberately sequential: each mention gates how far the read cursor moves
+        // Keep lookups bounded, one mention at a time
         // oxlint-disable-next-line no-await-in-loop
         const parentAuthor = await getParentAuthor(agent, mention);
         if (parentAuthor) {
@@ -130,46 +112,16 @@ export default async function storeMentions(
         }
       }
 
-      // Store by full AT URI, so replaying a notification is a no-op
+      // Replaying a page after a failure cannot duplicate or reset a request
       // oxlint-disable-next-line no-await-in-loop
       await db.storeMention(mentionData);
       stats.stored++;
-
-      if (!firstFailure) {
-        lastStoredIndexedAt = mention.indexedAt;
-      }
     } catch (error) {
-      // A single bad mention shouldn't stop the rest from being stored, but it
-      // does stop the read cursor from moving past it
       logger.error(`❌ Error storing mention ${mention.uri}\n\t- ${describeError(error)}`);
       stats.failed++;
-
-      firstFailure ??= mention;
+      allStored = false;
     }
   }
 
-  // Don't move the cursor onto (or past) a mention we failed to store, otherwise
-  // it gets marked read and is never retried
-  if (
-    firstFailure &&
-    lastStoredIndexedAt &&
-    Date.parse(lastStoredIndexedAt) >= Date.parse(firstFailure.indexedAt)
-  ) {
-    lastStoredIndexedAt = null;
-  }
-
-  const seenAt = firstFailure ? lastStoredIndexedAt : latestIndexedAt;
-
-  if (firstFailure) {
-    logger.warn(
-      `⚠️ Leaving notifications from ${firstFailure.indexedAt} onwards unread so they're retried next run`,
-    );
-  }
-
-  if (!seenAt) {
-    logger.warn('🚧 Not marking any notifications as read this run');
-    return;
-  }
-
-  await bsky.markNotificationsAsRead(agent, seenAt);
+  return allStored;
 }

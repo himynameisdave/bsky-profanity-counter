@@ -14,6 +14,10 @@ export const BLUESKY_SERVICE = 'https://bsky.social';
 // whichever comes first.
 export const MAX_POSTS = 25_000;
 
+// Pages per pass. A paused run checks new arrivals separately, then resumes
+// its checkpointed backlog, without marking unfinished notifications as read.
+export const MAX_NOTIFICATION_PAGES = 25;
+
 // How long an analysis gets reused before we count someone's posts again
 export const ANALYSIS_CACHE_TTL_MS = 24 * HOUR_MS;
 
