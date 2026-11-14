@@ -17,6 +17,8 @@ async function main() {
   try {
     logger.info('🚀 Starting profile update process...');
 
+    db.init(env.database);
+
     // Create and authenticate the Bluesky agent
     const agent = await bsky.createAgent(env.bluesky);
 
@@ -29,11 +31,12 @@ async function main() {
     logger.success('✅ Profile update completed successfully');
   } catch (error) {
     logger.error(`❌ Profile update failed: ${describeError(error)}`);
-    process.exit(1);
-  } finally {
-    // Clean up database connection
-    await db.disconnect();
+    // Don't wait on disconnect(): closing the pool waits for every query, including
+    // one withTimeout gave up on. The connections close with the process.
+    return process.exit(1);
   }
+
+  await db.disconnect();
 }
 
 // Run the main function

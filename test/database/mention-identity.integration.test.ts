@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { describe, it, expect, vi, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import dotenv from 'dotenv';
 import type { BskyAgent } from '@atproto/api';
 import type { Notification } from '../../src/types.js';
+import type { PrismaClient } from '../../src/generated/prisma/client.js';
 import * as db from '../../src/services/database.js';
 import storeMentions from '../../src/mentions.js';
+import { createFixtureClient, testDatabase } from './postgres.js';
 
 vi.mock(import('../../src/services/logger.js'), () => ({
   info: vi.fn<() => void>(),
@@ -20,7 +21,7 @@ dotenv.config({ quiet: true });
 describe.skipIf(!process.env.DATABASE_URL || process.env.MENTION_IDENTITY_DATABASE_TESTS !== '1')(
   'mention URI identity in PostgreSQL',
   () => {
-    const fixtures = new PrismaClient();
+    let fixtures: PrismaClient;
     const fixtureId = randomUUID().replaceAll('-', '');
     const did = `did:plc:${fixtureId}`;
     const uris: string[] = [];
@@ -31,6 +32,11 @@ describe.skipIf(!process.env.DATABASE_URL || process.env.MENTION_IDENTITY_DATABA
       uris.push(postUrl);
       return { did: repo, userHandle: 'fixture.bsky.social', postId: key, postUrl, isReply: false };
     };
+
+    beforeAll(() => {
+      db.init(testDatabase());
+      fixtures = createFixtureClient();
+    });
 
     afterAll(async () => {
       await fixtures.mention.deleteMany({ where: { postUrl: { in: uris } } });

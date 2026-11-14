@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { describe, it, expect, vi, afterAll } from 'vitest';
-import { PrismaClient } from '@prisma/client';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import type { BskyAgent } from '@atproto/api';
+import type { PrismaClient } from '../../src/generated/prisma/client.js';
 import * as db from '../../src/services/database.js';
 import { collectMentions } from '../../src/notifications.js';
+import { createFixtureClient, testDatabase } from './postgres.js';
 
 vi.mock(import('../../src/services/logger.js'), () => ({
   info: vi.fn<() => void>(),
@@ -16,7 +17,7 @@ vi.mock(import('../../src/services/logger.js'), () => ({
 describe.skipIf(!process.env.DATABASE_URL || process.env.NOTIFICATION_SCAN_DATABASE_TESTS !== '1')(
   'notification collection in PostgreSQL',
   () => {
-    const fixtures = new PrismaClient();
+    let fixtures: PrismaClient;
     const id = randomUUID().replaceAll('-', '');
     const botDid = `did:plc:bot${id}`;
     const otherBotDid = `did:plc:other${id}`;
@@ -52,6 +53,11 @@ describe.skipIf(!process.env.DATABASE_URL || process.env.NOTIFICATION_SCAN_DATAB
       app: { bsky: { notification: { updateSeen } } },
     } as unknown as BskyAgent;
 
+    beforeAll(() => {
+      db.init(testDatabase());
+      fixtures = createFixtureClient();
+    });
+
     afterAll(async () => {
       await fixtures.mention.deleteMany({ where: { did: targetDid } });
       await fixtures.notificationScan.deleteMany({
@@ -71,7 +77,9 @@ describe.skipIf(!process.env.DATABASE_URL || process.env.NOTIFICATION_SCAN_DATAB
       expect(updateSeen).not.toHaveBeenCalled();
 
       // Lose the collector's connection, then resume from the durable bookmark.
+      // disconnect() forgets the client, so set up a new one, like the next run would
       await db.disconnect();
+      db.init(testDatabase());
       listNotifications.mockClear();
       await collectMentions(agent);
 

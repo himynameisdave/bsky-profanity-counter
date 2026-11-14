@@ -159,3 +159,5 @@ next-env.d.ts
 
 # Prisma
 /prisma/migrations/
+# The generated client (`pnpm prisma:generate`)
+/src/generated/

@@ -1,4 +1,7 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { Prisma, PrismaClient } from '../generated/prisma/client.js';
+import { DATABASE_CONNECT_TIMEOUT_MS, DATABASE_POOL_MAX } from '../config.js';
+import type { DatabaseConfig } from '../config.js';
 import { DUPLICATE_SNAPSHOT_REASON, planIdentityBackfill } from './identity-backfill.js';
 import type { DailyCounts } from './profanity.js';
 import type { FeedCheckpoint } from './bluesky.js';
@@ -23,12 +26,58 @@ export type ProfanityDetails = {
 };
 
 // The one Prisma client for the whole app. Everything that touches the database
-// goes through this module, so there's a single connection pool to close.
-const prisma = new PrismaClient();
+// goes through this module, so there's a single connection pool to close. It's
+// made by init(), never at import time, so importing this reads no environment.
+let client: PrismaClient | undefined;
+
+// The Postgres schema the generated queries use. Raw SQL names its tables in it
+// too, rather than trusting search_path, which a role or database can set to
+// put some other schema first.
+let schema = 'public';
+
+/**
+ * Sets up the client and its connection pool for this run. Entry points call it
+ * once, after loadEnv(). Nothing connects until the first query.
+ */
+export function init(config: DatabaseConfig) {
+  if (client) {
+    throw new Error('The database is already initialized; call init() once per run');
+  }
+
+  schema = config.schema ?? 'public';
+  const adapter = new PrismaPg(
+    {
+      connectionString: config.url,
+      max: DATABASE_POOL_MAX,
+      connectionTimeoutMillis: DATABASE_CONNECT_TIMEOUT_MS,
+      // Lets you spot the bot's connections in pg_stat_activity
+      application_name: 'profanity.accountant',
+    },
+    { schema },
+  );
+  client = new PrismaClient({
+    adapter,
+    // Starting a transaction can mean opening a connection, since pg closes idle
+    // ones after 10s, so give it as long as a connection gets rather than Prisma's 2s
+    transactionOptions: { maxWait: DATABASE_CONNECT_TIMEOUT_MS },
+  });
+}
+
+const quoteIdentifier = (name: string) => `"${name.replaceAll('"', '""')}"`;
+
+/** A table in the generated queries' schema, quoted for raw SQL. */
+const table = (name: string) => Prisma.raw(`${quoteIdentifier(schema)}.${quoteIdentifier(name)}`);
+
+const prisma = (): PrismaClient => {
+  if (!client) {
+    throw new Error('The database is not initialized; call init() after loadEnv()');
+  }
+  return client;
+};
 
 /** Where this bot paused collecting unread notifications, if it hasn't finished. */
 export async function getNotificationScan(botDid: string) {
-  return prisma.notificationScan.findUnique({ where: { botDid } });
+  return prisma().notificationScan.findUnique({ where: { botDid } });
 }
 
 /** Call only after every mention on the page has been persisted. */
@@ -38,7 +87,7 @@ export async function saveNotificationScan(
   latestIndexedAt: string | null,
 ) {
   const data = { cursor, latestIndexedAt };
-  return prisma.notificationScan.upsert({
+  return prisma().notificationScan.upsert({
     where: { botDid },
     create: { botDid, ...data },
     update: data,
@@ -47,7 +96,7 @@ export async function saveNotificationScan(
 
 /** Clear only after Bluesky accepts the completed scan's read acknowledgement. */
 export async function clearNotificationScan(botDid: string) {
-  return prisma.notificationScan.deleteMany({ where: { botDid } });
+  return prisma().notificationScan.deleteMany({ where: { botDid } });
 }
 
 /**
@@ -70,7 +119,7 @@ export async function storeMention({
   postUrl: string;
   isReply: boolean;
 }) {
-  await prisma.mention.createMany({
+  await prisma().mention.createMany({
     skipDuplicates: true,
     data: {
       did,
@@ -84,7 +133,7 @@ export async function storeMention({
 
   // Read after the atomic insert, never check before inserting. Throw if the
   // URI wasn't stored, so ingestion cannot advance its cursor on a false success.
-  return prisma.mention.findUniqueOrThrow({ where: { postUrl } });
+  return prisma().mention.findUniqueOrThrow({ where: { postUrl } });
 }
 
 /**
@@ -95,7 +144,7 @@ export async function storeMention({
  * counts if the run is killed partway through it (eg. by the workflow timeout).
  */
 export async function getUnprocessedMention() {
-  return prisma.$transaction(async (tx) => {
+  return prisma().$transaction(async (tx) => {
     // Find the first unprocessed mention
     const mention = await tx.mention.findFirst({
       where: {
@@ -130,7 +179,7 @@ export async function getUnprocessedMention() {
  * Get count of all mentions with UNPROCESSED status
  */
 export async function getUnprocessedMentionsCount() {
-  return prisma.mention.count({
+  return prisma().mention.count({
     where: {
       status: 'UNPROCESSED',
     },
@@ -151,7 +200,7 @@ export async function markMentionAsDone({
   replyUrl: string;
   analysisId?: string;
 }) {
-  return prisma.mention.update({
+  return prisma().mention.update({
     where: { id: mentionId },
     data: {
       status: 'DONE',
@@ -167,7 +216,7 @@ export async function markMentionAsDone({
  * Unlike ANALYZING, resetStuckMentions leaves FAILED mentions alone.
  */
 export async function markMentionAsFailed(mentionId: string, lastError: string) {
-  return prisma.mention.update({
+  return prisma().mention.update({
     where: { id: mentionId },
     data: { status: 'FAILED', lastError },
   });
@@ -175,12 +224,12 @@ export async function markMentionAsFailed(mentionId: string, lastError: string) 
 
 /** Record an attempt's error without changing its retry state. */
 export async function recordMentionError(mentionId: string, lastError: string) {
-  return prisma.mention.update({ where: { id: mentionId }, data: { lastError } });
+  return prisma().mention.update({ where: { id: mentionId }, data: { lastError } });
 }
 
 /** Find a proven account's analysis, however old it is. */
 export async function findAnalysis(did: string) {
-  return prisma.analysis.findUnique({ where: { did } });
+  return prisma().analysis.findUnique({ where: { did } });
 }
 
 /** Save one snapshot per account, keeping its latest display handle. */
@@ -198,7 +247,7 @@ export async function createOrUpdateAnalysis({
   profanityDetails: ProfanityDetails;
 }) {
   const data = { userHandle, totalPosts, profanityCount, profanityDetails };
-  return prisma.analysis.upsert({
+  return prisma().analysis.upsert({
     where: { did },
     update: { ...data, lastAnalyzedAt: new Date() },
     create: { ...data, did },
@@ -207,9 +256,10 @@ export async function createOrUpdateAnalysis({
 
 /** Refresh display fields without extending the analysis cache's lifetime. */
 export async function refreshTargetHandle(mentionId: string, did: string, userHandle: string) {
-  await prisma.$transaction([
-    prisma.mention.update({ where: { id: mentionId }, data: { userHandle } }),
-    prisma.analysis.updateMany({ where: { did }, data: { userHandle } }),
+  const db = prisma();
+  await db.$transaction([
+    db.mention.update({ where: { id: mentionId }, data: { userHandle } }),
+    db.analysis.updateMany({ where: { did }, data: { userHandle } }),
   ]);
 }
 
@@ -221,7 +271,7 @@ export async function cleanupOldAnalyses(olderThanDays = 30) {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
 
-  const result = await prisma.analysis.deleteMany({
+  const result = await prisma().analysis.deleteMany({
     where: {
       updatedAt: {
         lt: cutoffDate,
@@ -246,15 +296,15 @@ export async function getTotalProfanityCount({
   excludeDid,
   excludeHandle,
 }: { excludeDid?: string; excludeHandle?: string } = {}): Promise<number> {
-  const [{ total }] = await prisma.$queryRaw<[{ total: bigint | null }]>`
+  const [{ total }] = await prisma().$queryRaw<[{ total: bigint | null }]>`
     SELECT SUM(a."profanityCount") AS total
-    FROM "Analysis" a
+    FROM ${table('Analysis')} a
     WHERE (
       a."did" IS NOT NULL
       OR (
         a."profanityDetails" -> 'identityBackfill' ->> 'reason' IS DISTINCT FROM ${DUPLICATE_SNAPSHOT_REASON}
         AND NOT EXISTS (
-          SELECT 1 FROM "Analysis" b
+          SELECT 1 FROM ${table('Analysis')} b
           WHERE b."did" IS NOT NULL AND b."userHandle" = a."userHandle"
         )
       )
@@ -273,7 +323,7 @@ export async function getTotalProfanityCount({
 export async function resetStuckMentions(olderThanMinutes: number) {
   const cutoffDate = new Date(Date.now() - olderThanMinutes * 60 * 1000);
 
-  const result = await prisma.mention.updateMany({
+  const result = await prisma().mention.updateMany({
     where: {
       status: 'ANALYZING',
       updatedAt: {
@@ -289,15 +339,19 @@ export async function resetStuckMentions(olderThanMinutes: number) {
 }
 
 /**
- * Close the database connection when done
+ * Close the connection pool when done. Safe to call if init() never ran (ie:
+ * startup failed before it), and afterwards init() can run again.
  */
 export async function disconnect() {
-  await prisma.$disconnect();
+  const current = client;
+  // Forget it first, so nothing can query a closed pool and quietly open a new one
+  client = undefined;
+  await current?.$disconnect();
 }
 
 /** Offline only: stop all bot writers first. The apply is atomic and rerunnable. */
 export async function backfillIdentity(apply: boolean) {
-  return prisma.$transaction(
+  return prisma().$transaction(
     async (tx) => {
       const analyses = await tx.analysis.findMany();
       const mentions = await tx.mention.findMany();

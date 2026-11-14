@@ -5,7 +5,7 @@
   "description": "🤬 A bot for Bluesky which tells you how much profanity a user has posted..",
   "type": "module",
   "scripts": {
-    "prepare": "git config core.hooksPath .githooks",
+    "prepare": "git config core.hooksPath .githooks && prisma generate",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint -c oxlint.config.ts --deny-warnings",
@@ -17,6 +17,7 @@
     "update-profile": "node dist/update-profile.js",
     "update-profile:dev": "ts-node-esm src/update-profile.ts",
     "test": "vitest run",
+    "test:db": "vitest run --no-file-parallelism test/database",
     "test:watch": "vitest",
     "test:order": "vitest run --maxWorkers=1 --sequence.shuffle.files --sequence.seed=65",
     "prisma:generate": "prisma generate",
@@ -25,11 +26,13 @@
     "prisma:migrate:reset": "prisma migrate reset",
     "prisma:studio": "prisma studio",
     "db:push": "prisma db push",
-    "db:sync": "prisma db pull && prisma generate"
+    "db:sync": "prisma db pull && prisma generate",
+    "smoke:db": "node scripts/smoke-db.mjs"
   },
   "dependencies": {
     "@atproto/api": "^0.30.3",
-    "@prisma/client": "^6.11.1",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
     "dotenv": "^18.0.10",
     "loggit": "^1.1.1",
     "obscenity": "^0.4.6"
@@ -39,7 +42,7 @@
     "@types/node": "^22.16.0",
     "oxfmt": "^0.77.0",
     "oxlint": "^1.93.0",
-    "prisma": "^6.11.1",
+    "prisma": "7.10.1",
     "ts-node": "^10.9.2",
     "tsx": "^4.23.15",
     "typescript": "^5.8.3",

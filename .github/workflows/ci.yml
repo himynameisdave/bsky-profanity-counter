@@ -58,11 +58,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Without DATABASE_URL, like the scheduled workflows, which only hand it to
+      # their final step
       - name: Generate Prisma client
-        run: pnpm prisma:generate
+        run: env -u DATABASE_URL pnpm prisma:generate
 
+      # db push only syncs the tables; it never regenerates the client
       - name: Prepare integration database
-        run: pnpm db:push --skip-generate
+        run: pnpm db:push
 
       - name: Check formatting
         run: pnpm format:check
@@ -75,9 +78,16 @@ jobs:
 
       - name: Run tests
         run: pnpm test
+
+      # The suites that write to Postgres, one file at a time, since one of them
+      # checks a total over the whole table the others add to
+      - name: Run database tests
+        run: pnpm test:db
         env:
           PROFILE_TOTAL_DATABASE_TESTS: '1'
+          MENTION_IDENTITY_DATABASE_TESTS: '1'
           NOTIFICATION_SCAN_DATABASE_TESTS: '1'
+          PRISMA_ADAPTER_DATABASE_TESTS: '1'
 
       # Test files share workers, so this runs them all in one worker, shuffled with a fixed
       # seed, to catch state leaking from one file into the next. A single worker also keeps
@@ -87,7 +97,14 @@ jobs:
         env:
           PROFILE_TOTAL_DATABASE_TESTS: '1'
           MENTION_IDENTITY_DATABASE_TESTS: '1'
+          PRISMA_ADAPTER_DATABASE_TESTS: '1'
 
       # Production compiles with tsconfig.build.json, which typecheck doesn't exercise
       - name: Build
         run: pnpm build
+
+      # The compiled client, in plain Node rather than Vitest. It exits on its own
+      # once the pool is closed, so a leaked connection fails here as a timeout.
+      - name: Smoke-test the compiled database client
+        run: pnpm smoke:db
+        timeout-minutes: 2

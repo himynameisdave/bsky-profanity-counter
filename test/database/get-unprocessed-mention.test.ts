@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../../src/generated/prisma/client.js';
 
 const tx = vi.hoisted(() => ({
   mention: {
@@ -8,13 +8,14 @@ const tx = vi.hoisted(() => ({
   },
 }));
 
-vi.mock(import('@prisma/client'), () => ({
+vi.mock(import('../../src/generated/prisma/client.js'), () => ({
   PrismaClient: class {
     $transaction = async (run: (client: typeof tx) => Promise<unknown>) => run(tx);
   } as unknown as typeof PrismaClient,
 }));
 
-const { getUnprocessedMention } = await import('../../src/services/database.js');
+const { init, getUnprocessedMention } = await import('../../src/services/database.js');
+init({ url: 'postgresql://test:test@localhost:5432/test' });
 
 describe(getUnprocessedMention, () => {
   beforeEach(() => {

@@ -1,5 +1,5 @@
 import type { BskyAgent } from '@atproto/api';
-import type { Mention } from '@prisma/client';
+import type { Mention } from '../generated/prisma/client.js';
 import * as bsky from './bluesky.js';
 import * as db from './database.js';
 import * as logger from './logger.js';

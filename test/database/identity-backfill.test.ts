@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Analysis, Mention, Prisma } from '@prisma/client';
+import type { Analysis, Mention, Prisma } from '../../src/generated/prisma/client.js';
 import { planIdentityBackfill } from '../../src/services/identity-backfill.js';
 
 const snapshot = (id: string, did?: string): Analysis => ({

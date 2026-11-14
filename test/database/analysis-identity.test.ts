@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '../../src/generated/prisma/client.js';
 
 const queries = vi.hoisted(() => ({
   findUnique: vi.fn<(args: unknown) => Promise<unknown>>(),
@@ -8,7 +8,7 @@ const queries = vi.hoisted(() => ({
   updateMany: vi.fn<(args: unknown) => Promise<unknown>>(),
   transaction: vi.fn<(args: unknown) => Promise<unknown>>(),
 }));
-vi.mock(import('@prisma/client'), () => ({
+vi.mock(import('../../src/generated/prisma/client.js'), () => ({
   PrismaClient: class {
     analysis = {
       findUnique: queries.findUnique,
@@ -19,8 +19,9 @@ vi.mock(import('@prisma/client'), () => ({
     $transaction = queries.transaction;
   } as unknown as typeof PrismaClient,
 }));
-const { findAnalysis, createOrUpdateAnalysis, refreshTargetHandle, recordMentionError } =
+const { init, findAnalysis, createOrUpdateAnalysis, refreshTargetHandle, recordMentionError } =
   await import('../../src/services/database.js');
+init({ url: 'postgresql://test:test@localhost:5432/test' });
 
 beforeEach(() => vi.clearAllMocks());
 

@@ -1,4 +1,4 @@
-import type { Analysis, Mention, Prisma } from '@prisma/client';
+import type { Analysis, Mention, Prisma } from '../generated/prisma/client.js';
 
 /** Archived because another analysis of the same DID was kept instead. */
 export const DUPLICATE_SNAPSHOT_REASON = 'Duplicate DID snapshot';

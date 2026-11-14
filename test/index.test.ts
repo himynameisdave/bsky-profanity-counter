@@ -10,9 +10,13 @@ import type * as Analysis from '../src/analysis.js';
 import type * as Config from '../src/config.js';
 import type * as Notifications from '../src/notifications.js';
 
-const ENV = { bluesky: { identifier: 'test.bot', password: 'test-password' } };
+const ENV = {
+  bluesky: { identifier: 'test.bot', password: 'test-password' },
+  database: { url: 'postgresql://test:test@localhost:5432/test' },
+};
 
 const db = vi.hoisted(() => ({
+  init: vi.fn<typeof Db.init>(),
   resetStuckMentions: vi.fn<typeof Db.resetStuckMentions>(),
   disconnect: vi.fn<typeof Db.disconnect>(),
 }));
@@ -58,6 +62,7 @@ describe('the entrypoint', () => {
     exit = vi.spyOn(process, 'exit').mockReturnValue(undefined as never);
 
     loadEnv.mockReturnValue(ENV);
+    db.init.mockReset();
     db.resetStuckMentions.mockResolvedValue(0);
     db.disconnect.mockResolvedValue();
     bsky.createAgent.mockResolvedValue({} as BskyAgent);
@@ -122,10 +127,36 @@ describe('the entrypoint', () => {
 
     await import('../src/index.js');
 
+    expect(db.init).not.toHaveBeenCalled();
     expect(db.resetStuckMentions).not.toHaveBeenCalled();
     expect(bsky.createAgent).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
     expect(readSummary()).toContain('| Result | ❌ Failed |');
+    // Nothing was set up, but cleanup still runs, and has to cope with that
+    expect(db.disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('sets up the database from the validated environment before its first query', async () => {
+    await import('../src/index.js');
+
+    expect(db.init).toHaveBeenCalledExactlyOnceWith(ENV.database);
+    expect(loadEnv.mock.invocationCallOrder[0]).toBeLessThan(db.init.mock.invocationCallOrder[0]);
+    expect(db.init.mock.invocationCallOrder[0]).toBeLessThan(
+      db.resetStuckMentions.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("still disconnects and goes red when the database can't be set up", async () => {
+    db.init.mockImplementation(() => {
+      throw new Error('The database is already initialized');
+    });
+
+    await import('../src/index.js');
+
+    expect(db.resetStuckMentions).not.toHaveBeenCalled();
+    expect(bsky.createAgent).not.toHaveBeenCalled();
+    expect(db.disconnect).toHaveBeenCalledOnce();
+    expect(process.exitCode).toBe(1);
   });
 
   it("exits with an error when it can't log in, so the job goes red", async () => {
