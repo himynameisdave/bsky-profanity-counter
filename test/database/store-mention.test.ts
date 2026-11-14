@@ -7,9 +7,9 @@ const { createMany, findUniqueOrThrow } = vi.hoisted(() => ({
 }));
 
 vi.mock(import('@prisma/client'), () => ({
-  PrismaClient: vi.fn<() => unknown>(() => ({
-    mention: { createMany, findUniqueOrThrow },
-  })) as unknown as typeof PrismaClient,
+  PrismaClient: class {
+    mention = { createMany, findUniqueOrThrow };
+  } as unknown as typeof PrismaClient,
 }));
 
 const { storeMention } = await import('../../src/services/database.js');

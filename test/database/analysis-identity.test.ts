@@ -9,15 +9,15 @@ const queries = vi.hoisted(() => ({
   transaction: vi.fn<(args: unknown) => Promise<unknown>>(),
 }));
 vi.mock(import('@prisma/client'), () => ({
-  PrismaClient: vi.fn<() => unknown>(() => ({
-    analysis: {
+  PrismaClient: class {
+    analysis = {
       findUnique: queries.findUnique,
       upsert: queries.upsert,
       updateMany: queries.updateMany,
-    },
-    mention: { update: queries.update },
-    $transaction: queries.transaction,
-  })) as unknown as typeof PrismaClient,
+    };
+    mention = { update: queries.update };
+    $transaction = queries.transaction;
+  } as unknown as typeof PrismaClient,
 }));
 const { findAnalysis, createOrUpdateAnalysis, refreshTargetHandle, recordMentionError } =
   await import('../../src/services/database.js');
