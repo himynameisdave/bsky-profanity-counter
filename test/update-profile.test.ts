@@ -78,25 +78,23 @@ describe('the profile update entrypoint', () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
-  it('disconnects before exiting with an error when the update fails', async () => {
+  // Closing the pool waits on every query, so a stalled one would hang the job
+  // until the workflow timeout instead of failing now
+  it('exits with an error when the update fails, without waiting on the pool', async () => {
     profileUpdater.updateProfileDescription.mockRejectedValue(new Error('Internal Server Error'));
 
     await import('../src/update-profile.js');
 
-    expect(db.disconnect).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledExactlyOnceWith(1);
-    expect(db.disconnect.mock.invocationCallOrder[0]).toBeLessThan(
-      exit.mock.invocationCallOrder[0],
-    );
+    expect(db.disconnect).not.toHaveBeenCalled();
   });
 
-  it("still disconnects and exits with an error when it can't log in", async () => {
+  it("exits with an error when it can't log in", async () => {
     bsky.createAgent.mockRejectedValue(new Error('AuthenticationRequired'));
 
     await import('../src/update-profile.js');
 
     expect(profileUpdater.updateProfileDescription).not.toHaveBeenCalled();
-    expect(db.disconnect).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledExactlyOnceWith(1);
   });
 
