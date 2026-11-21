@@ -39,6 +39,9 @@ const postOn = (day: string, text: string) =>
     record: { text, createdAt: `${day}T12:00:00.000Z` },
   }) as AppBskyFeedDefs.PostView;
 
+// Counted the way Bluesky counts a post's length
+const graphemes = (text: string) => [...new Intl.Segmenter().segment(text)].length;
+
 describe('Profanity Service', () => {
   describe(analyzePosts, () => {
     it('should track the top 3 profanities correctly', () => {
@@ -309,6 +312,88 @@ describe('Profanity Service', () => {
       expect(message).toBe(
         'No original posts found for @quiet.bsky.social in the last year to analyze.',
       );
+    });
+
+    describe('length', () => {
+      // 250 characters, near the 253 a handle can be
+      const LONG_HANDLE = `${`${'a'.repeat(60)}.`.repeat(3)}${'b'.repeat(55)}.bsky.social`;
+
+      const swears: ProfanityAnalysis = {
+        totalCount: 1_234_567,
+        wordCounts: {},
+        topThree: [
+          { word: 'motherfucker', count: 1_000_000, rank: 1 },
+          { word: 'shit', count: 200_000, rank: 2 },
+          { word: 'damn', count: 34_567, rank: 3 },
+        ],
+        postCount: 25_000,
+      };
+
+      it('builds the synthetic handle we meant to', () => {
+        expect(LONG_HANDLE).toHaveLength(250);
+      });
+
+      it("doesn't leave trailing whitespace after the medals", () => {
+        const message = generateResponseMessage(swears, 'testuser', 25_000, THEY);
+
+        expect(message).toBe(message.trimEnd());
+        expect(message.endsWith('🥉 "damn" (34,567 times)')).toBe(true);
+      });
+
+      it('keeps every medal when they fit', () => {
+        expect(generateResponseMessage(swears, 'testuser', 25_000, THEY)).toBe(
+          `@testuser has swears! They've used 1,234,567 profanities in their last 25,000 posts.\n\n` +
+            `🥇 "motherfucker" (1,000,000 times)\n🥈 "shit" (200,000 times)\n🥉 "damn" (34,567 times)`,
+        );
+      });
+
+      it('drops medals from the bottom up before touching the lede', () => {
+        // Long enough that only the gold medal still fits
+        const handle = `${`${'a'.repeat(60)}.`.repeat(2)}${'b'.repeat(50)}.bsky.social`;
+        const message = generateResponseMessage(swears, handle, 25_000, THEY);
+
+        expect(message).toContain(`@${handle} has swears!`);
+        expect(message).toContain('🥇');
+        expect(message).not.toContain('🥈');
+        expect(message).not.toContain('🥉');
+        expect(graphemes(message)).toBeLessThanOrEqual(300);
+      });
+
+      it.each([
+        ['swears', swears, 25_000, '1,234,567'],
+        ['a good citizen', { ...swears, totalCount: 0, topThree: [] }, 25_000, '25,000'],
+        [
+          'no posts',
+          { ...swears, totalCount: 0, topThree: [], postCount: 0 },
+          0,
+          'no original posts',
+        ],
+      ])(
+        'fits a 250 character handle with %s into one post',
+        (_name, analysis, postCount, count) => {
+          const message = generateResponseMessage(analysis, LONG_HANDLE, postCount, THEY);
+
+          expect(graphemes(message)).toBeLessThanOrEqual(300);
+          expect(message).toContain(`@${LONG_HANDLE}`);
+          expect(message).toContain(count);
+        },
+      );
+
+      it('still fits the longest handle allowed, 253 characters', () => {
+        const handle = `${`${'a'.repeat(63)}.`.repeat(3)}${'b'.repeat(54)}.social`;
+        expect(handle).toHaveLength(253);
+
+        const message = generateResponseMessage(swears, handle, 25_000, THEY);
+
+        expect(graphemes(message)).toBeLessThanOrEqual(300);
+        expect(message).toBe(`@${handle}: 1,234,567 profanities in 25,000 posts.`);
+      });
+
+      it('falls back to just the number for a handle no post could hold', () => {
+        const message = generateResponseMessage(swears, 'a'.repeat(400), 25_000, THEY);
+
+        expect(message).toBe('1,234,567 profanities in their last 25,000 posts.');
+      });
     });
 
     describe('pronouns', () => {

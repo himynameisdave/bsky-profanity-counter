@@ -8,6 +8,7 @@ import {
 } from 'obscenity';
 import BAD_WORDS from '../data/badWords.js';
 import UNQUOTABLE_WORDS from '../data/unquotableWords.js';
+import * as postText from './post-text.js';
 import type { Pronouns } from './pronouns.js';
 
 // Type for profanity analysis results
@@ -206,26 +207,50 @@ export const generateResponseMessage = (
   postCount: number,
   pronouns: Pronouns,
 ): string => {
+  const handle = `@${username}`;
+  const postTotal = `${postCount.toLocaleString('en-CA')} posts`;
+  const posts = `${pronouns.possessive} last ${postTotal}`;
+
+  // Each message gets shorter versions for long handles (they can be up to 253
+  // characters), so everyone gets an answer within Bluesky's 300 graphemes. The
+  // fallbacks drop the handle, which only a handle longer than that would need.
+
   // Zero posts isn't proof they never swear, so don't call them a good citizen
   if (postCount === 0) {
-    return `No original posts found for @${username} in the last year to analyze.`;
+    return postText.firstThatFits(
+      [
+        `No original posts found for ${handle} in the last year to analyze.`,
+        `${handle}: no original posts in the last year to analyze.`,
+      ],
+      'No original posts found in the last year to analyze.',
+    );
   }
 
   if (analysis.totalCount === 0) {
-    return `@${username} has been a good citizen!\nNo profanity found in ${pronouns.possessive} last ${postCount.toLocaleString('en-CA')} posts.`;
+    return postText.firstThatFits(
+      [
+        `${handle} has been a good citizen!\nNo profanity found in ${posts}.`,
+        `${handle}: no profanity in ${postTotal}.`,
+      ],
+      `No profanity found in ${posts}.`,
+    );
   }
 
-  let message = `@${username} has swears! ${pronouns.subjectHas} used ${analysis.totalCount.toLocaleString('en-CA')} profanities in ${pronouns.possessive} last ${postCount.toLocaleString('en-CA')} posts.`;
+  const profanities = `${analysis.totalCount.toLocaleString('en-CA')} profanities`;
+  const total = `${profanities} in ${posts}.`;
+  const lede = `${handle} has swears! ${pronouns.subjectHas} used ${total}`;
+  const medals = analysis.topThree.map(
+    (item) =>
+      `${MEDALS[item.rank] ?? ''} "${renderWord(item.word)}" (${item.count.toLocaleString('en-CA')} times)`,
+  );
 
-  // Add top three profanities with medal emojis if available
-  if (analysis.topThree.length > 0) {
-    message += '\n\n';
-
-    for (const item of analysis.topThree) {
-      const medal = MEDALS[item.rank] ?? '';
-      message += `${medal} "${renderWord(item.word)}" (${item.count.toLocaleString('en-CA')} times)\n`;
-    }
-  }
-
-  return message;
+  // Every medal line, then fewer of them from the bottom up, then just the
+  // headline number with a shorter lede
+  const withMedals = medals.map((_line, i) =>
+    [lede, medals.slice(0, medals.length - i).join('\n')].join('\n\n'),
+  );
+  return postText.firstThatFits(
+    [...withMedals, lede, `${handle}: ${profanities} in ${postTotal}.`],
+    total,
+  );
 };
